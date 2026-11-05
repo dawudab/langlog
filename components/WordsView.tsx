@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useCallback, useEffect } from 'react';
-import { Trash2, Volume2, Filter as FilterIcon, Search, ListChecks, Grid, List, BookOpen, Book, FileText, Hash, FileQuestion } from 'lucide-react';
+import { Trash2, Volume2, Filter as FilterIcon, Search, Grid, List, BookOpen, Book, FileText, FileQuestion } from 'lucide-react';
 import { SavedWord, Flashcard } from '../types'; 
 import { SUPPORTED_LANGUAGES, DEFAULT_ORIGINAL_LANGUAGE } from '../constants';
 import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';

@@ -1,6 +1,6 @@
 import React from 'react';
 import { ArrowLeft, Volume2, Copy, CheckCircle } from 'lucide-react';
-import { JournalEntryData, Language } from '../types';
+import { JournalEntryData } from '../types';
 import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
 import { SUPPORTED_LANGUAGES } from '../constants';
 

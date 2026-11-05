@@ -5,7 +5,7 @@ import WordsView from './components/WordsView';
 import SavedEntriesView from './components/SavedEntriesView';
 import EntryDetailView from './components/EntryDetailView';
 import Notification from './components/Notification';
-import { AppView, JournalEntryData, SavedWord, VocabularyItem, NotificationMessage, ProcessedEntryData } from './types';
+import { AppView, JournalEntryData, SavedWord, VocabularyItem, NotificationMessage } from './types';
 import { DEFAULT_TARGET_LANGUAGE_CODE } from './constants';
 
 const App: React.FC = () => {
@@ -109,8 +109,6 @@ const App: React.FC = () => {
       <main className="flex-grow p-4 md:p-6 lg:p-8">
         {currentView === 'journal' && (
           <JournalView
-            targetLangCode={targetLangCode}
-            setTargetLangCode={setTargetLangCode}
             setNotification={setNotification}
             setCurrentView={setCurrentView}
             savedEntriesCount={savedEntries.length}
@@ -135,7 +133,8 @@ const App: React.FC = () => {
           <SavedEntriesView
             savedEntries={savedEntries}
             isLoading={false}
-            loadJournalEntry={handleViewEntryDetail}
+            loadJournalEntry={handleLoadEntryInJournal}
+            onViewEntryDetail={handleViewEntryDetail}
             setCurrentView={setCurrentView}
             setNotification={setNotification}
           />

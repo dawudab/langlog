@@ -58,7 +58,6 @@ const OutputDisplay: React.FC<OutputDisplayProps> = ({
     isSpeaking, 
     isPaused, 
     currentText, 
-    currentLang,
     progress,
     stop: stopSpeech
   } = useSpeechSynthesis();
@@ -368,7 +367,7 @@ const OutputDisplay: React.FC<OutputDisplayProps> = ({
                 </div>
                 <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-r from-transparent to-slate-900/80 pointer-events-none"></div>
               </div>
-              <style jsx>{`
+              <style>{`
                 .hide-scrollbar::-webkit-scrollbar {
                   display: none;
                 }

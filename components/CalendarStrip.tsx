@@ -1,5 +1,4 @@
 import React from 'react';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 interface CalendarStripProps {
   onDateSelect: (date: Date) => void;
@@ -58,7 +57,7 @@ const CalendarStrip: React.FC<CalendarStripProps> = ({ onDateSelect, selectedDat
           );
         })}
       </div>
-      <style jsx>{`
+      <style>{`
         .scrollbar-hide::-webkit-scrollbar {
           display: none;
         }

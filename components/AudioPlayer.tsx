@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Volume2, VolumeX, Play, Pause, RotateCcw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Volume2, Play, Pause, RotateCcw } from 'lucide-react';
 
 interface AudioPlayerProps {
   text: string;

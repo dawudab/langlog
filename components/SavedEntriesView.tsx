@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Archive as ArchiveIcon, BookOpen, Volume2, CalendarDays, Filter as FilterIcon, Search } from 'lucide-react';
-import { JournalEntryData, Language } from '../types';
+import { JournalEntryData } from '../types';
 import { SUPPORTED_LANGUAGES } from '../constants';
 import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
 import LoadingSpinner from './LoadingSpinner';
@@ -8,17 +8,17 @@ import LoadingSpinner from './LoadingSpinner';
 interface SavedEntriesViewProps {
   savedEntries: JournalEntryData[];
   isLoading: boolean;
-  loadJournalEntry: (entry: JournalEntryData) => void; 
-  setCurrentView: (view: 'journal') => void; 
-  setNotification: (notification: { type: 'success' | 'error'; message: string } | null) => void;
+  loadJournalEntry: (entry: JournalEntryData) => void;
+  onViewEntryDetail?: (entry: JournalEntryData) => void;
+  setCurrentView?: (view: 'journal') => void; 
+  setNotification?: (notification: { type: 'success' | 'error'; message: string } | null) => void;
 }
 
 const SavedEntriesView: React.FC<SavedEntriesViewProps> = ({ 
     savedEntries, 
     isLoading, 
     loadJournalEntry, 
-    setCurrentView,
-    setNotification
+    onViewEntryDetail,
 }) => {
   const { speak, isSpeaking } = useSpeechSynthesis();
   const [searchTerm, setSearchTerm] = useState('');
@@ -116,18 +116,28 @@ const SavedEntriesView: React.FC<SavedEntriesViewProps> = ({
                   {entry.originalLanguageName} to {entry.targetLanguageName}
                 </p>
               </div>
-              <button
-                onClick={() => {
-                  // Ensure we include the date field when loading the entry
-                  loadJournalEntry({
-                    ...entry,
-                    date: entry.date || new Date(entry.createdAt).toISOString().split('T')[0]
-                  });
-                }}
-                className="mt-2 sm:mt-0 bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium py-1.5 px-3 rounded-md flex items-center transition-colors"
-              >
-                <BookOpen size={14} className="mr-1.5" /> Load to Journal
-              </button>
+              <div className="flex space-x-2 mt-2 sm:mt-0">
+                {onViewEntryDetail && (
+                  <button
+                    onClick={() => onViewEntryDetail(entry)}
+                    className="bg-slate-600 hover:bg-slate-500 text-white text-xs font-medium py-1.5 px-3 rounded-md flex items-center transition-colors"
+                  >
+                    View Details
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    // Ensure we include the date field when loading the entry
+                    loadJournalEntry({
+                      ...entry,
+                      date: entry.date || new Date(entry.createdAt).toISOString().split('T')[0]
+                    });
+                  }}
+                  className="bg-sky-600 hover:bg-sky-500 text-white text-xs font-medium py-1.5 px-3 rounded-md flex items-center transition-colors"
+                >
+                  <BookOpen size={14} className="mr-1.5" /> Load to Journal
+                </button>
+              </div>
             </div>
 
             <details className="group">
