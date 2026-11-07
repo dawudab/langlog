@@ -338,6 +338,14 @@ async function startServer() {
     });
   };
 
+  const isValidElevenLabsVoiceId = (id: unknown): id is string => {
+    if (typeof id !== 'string') return false;
+    const trimmed = id.trim();
+    if (!trimmed || trimmed.startsWith('sk_')) return false;
+    if (/^[0-9a-fA-F]{32,}$/.test(trimmed)) return false;
+    return /^[a-zA-Z0-9]{15,30}$/.test(trimmed);
+  };
+
   // API Route: ElevenLabs TTS Proxy for Natural Fusha Arabic Pronunciation
   app.post('/api/tts', async (req: Request, res: Response) => {
     const { text, voiceId } = req.body || {};
@@ -356,47 +364,63 @@ async function startServer() {
       });
     }
 
-    const selectedVoice =
-      typeof voiceId === 'string' && voiceId.trim().length > 0
-        ? voiceId.trim()
-        : process.env.VITE_ELEVENLABS_VOICE_ID || 'onwK4e9ZLuTAKqWW03F9';
+    const candidateVoices = Array.from(
+      new Set([
+        ...(isValidElevenLabsVoiceId(voiceId) ? [voiceId.trim()] : []),
+        ...(isValidElevenLabsVoiceId(process.env.VITE_ELEVENLABS_VOICE_ID)
+          ? [process.env.VITE_ELEVENLABS_VOICE_ID!.trim()]
+          : []),
+        'pNInz6obpgDQGcFmaJgB',
+        'onwK4e9ZLuTAKqWW03F9',
+      ])
+    );
 
     try {
-      const ttsResponse = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
-          selectedVoice
-        )}?output_format=mp3_44100_128`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'xi-api-key': elevenLabsKey.trim(),
-          },
-          body: JSON.stringify({
-            text: text.trim(),
-            model_id: 'eleven_multilingual_v2',
-            voice_settings: {
-              stability: 0.65,
-              similarity_boost: 0.8,
-              style: 0.15,
-              use_speaker_boost: true,
-            },
-          }),
-        }
-      );
+      let lastStatus = 500;
+      let lastErrText = '';
 
-      if (!ttsResponse.ok) {
-        const errText = await ttsResponse.text().catch(() => '');
-        return res.status(ttsResponse.status).json({
-          error: `ElevenLabs API error (${ttsResponse.status})`,
-          details: errText.slice(0, 300),
-        });
+      for (const selectedVoice of candidateVoices) {
+        const ttsResponse = await fetch(
+          `https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(
+            selectedVoice
+          )}?output_format=mp3_44100_128`,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'xi-api-key': elevenLabsKey.trim(),
+            },
+            body: JSON.stringify({
+              text: text.trim(),
+              model_id: 'eleven_multilingual_v2',
+              voice_settings: {
+                stability: 0.65,
+                similarity_boost: 0.8,
+                style: 0.15,
+                use_speaker_boost: true,
+              },
+            }),
+          }
+        );
+
+        if (ttsResponse.ok) {
+          const arrayBuffer = await ttsResponse.arrayBuffer();
+          res.setHeader('Content-Type', 'audio/mpeg');
+          res.setHeader('Cache-Control', 'public, max-age=86400');
+          return res.send(Buffer.from(arrayBuffer));
+        }
+
+        lastStatus = ttsResponse.status;
+        lastErrText = await ttsResponse.text().catch(() => '');
+        if (lastStatus === 401 || lastStatus === 403 || lastStatus === 429) {
+          break;
+        }
       }
 
-      const arrayBuffer = await ttsResponse.arrayBuffer();
-      res.setHeader('Content-Type', 'audio/mpeg');
-      res.setHeader('Cache-Control', 'public, max-age=86400');
-      return res.send(Buffer.from(arrayBuffer));
+      return res.status(lastStatus).json({
+        error: `ElevenLabs API error (${lastStatus})`,
+        details: lastErrText.slice(0, 300),
+      });
     } catch (error: any) {
       return res.status(500).json({
         error: error?.message || 'Failed to synthesize speech via ElevenLabs.',

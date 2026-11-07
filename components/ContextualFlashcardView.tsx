@@ -9,7 +9,12 @@ import {
   ArrowRight,
   XCircle,
 } from 'lucide-react';
-import { WordBankItem, isWordMastered, normalizeArabicToken } from '../types';
+import {
+  WordBankItem,
+  isWordMastered,
+  normalizeArabicToken,
+  isSameArabicWordInContext,
+} from '../types';
 import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
 import { resolveVisualCueForKeyword } from '../utils/visualCueAssets';
 
@@ -36,6 +41,10 @@ const FALLBACK_FUSHA_DISTRACTORS: Array<{
   { arabicWord: 'سَكِينَةٍ', englishMeaning: 'tranquility' },
   { arabicWord: 'فَجْرًا', englishMeaning: 'at dawn' },
 ];
+
+function cleanDisplayArabicWord(word: string): string {
+  return word.replace(/[.,،؛؟!":«»()[\]]/g, '').trim() || word;
+}
 
 const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
   wordBank,
@@ -73,33 +82,40 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
   const currentCard =
     studyDeck.length > 0 ? studyDeck[currentIndex % studyDeck.length] : null;
 
+  const targetDisplayWord = currentCard
+    ? cleanDisplayArabicWord(currentCard.arabicWord)
+    : '';
+
   // Build 4 multiple-choice Arabic options for "Listen and Select"
   const listenOptions = useMemo(() => {
     if (!currentCard) return [];
-    const targetNorm = normalizeArabicToken(currentCard.arabicWord);
+    const targetClean = cleanDisplayArabicWord(currentCard.arabicWord);
+    const targetNorm = normalizeArabicToken(targetClean);
 
     const pool: string[] = [];
     const seenNorm = new Set<string>([targetNorm]);
 
     for (const item of wordBank) {
-      const norm = normalizeArabicToken(item.arabicWord);
+      const cleaned = cleanDisplayArabicWord(item.arabicWord);
+      const norm = normalizeArabicToken(cleaned);
       if (norm && !seenNorm.has(norm)) {
         seenNorm.add(norm);
-        pool.push(item.arabicWord);
+        pool.push(cleaned);
       }
     }
 
     for (const fallback of FALLBACK_FUSHA_DISTRACTORS) {
       if (pool.length >= 3) break;
-      const norm = normalizeArabicToken(fallback.arabicWord);
+      const cleaned = cleanDisplayArabicWord(fallback.arabicWord);
+      const norm = normalizeArabicToken(cleaned);
       if (norm && !seenNorm.has(norm)) {
         seenNorm.add(norm);
-        pool.push(fallback.arabicWord);
+        pool.push(cleaned);
       }
     }
 
     const distractors = pool.slice(0, 3);
-    const combined = [currentCard.arabicWord, ...distractors];
+    const combined = [targetClean, ...distractors];
 
     // Deterministic shuffle seeded by currentCard.id + currentIndex
     const seedStr = `${currentCard.id}-${currentIndex}`;
@@ -123,10 +139,12 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
 
     if (!currentCard) return;
 
+    const cleanWord = cleanDisplayArabicWord(currentCard.arabicWord);
+
     if (exerciseMode === 'listenSelect') {
       // Always play the target word audio in "Listen and Select" mode
       const timer = window.setTimeout(() => {
-        speak(currentCard.arabicWord, 'ar-SA');
+        speak(cleanWord, 'ar-SA');
       }, 150);
       return () => window.clearTimeout(timer);
     }
@@ -134,7 +152,7 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
     if (autoPlayAudio) {
       const timer = window.setTimeout(() => {
         speak(
-          `${currentCard.arabicWord}. ${currentCard.contextSentenceArabic}`,
+          `${cleanWord}. ${currentCard.contextSentenceArabic}`,
           'ar-SA'
         );
       }, 150);
@@ -207,7 +225,6 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
 
   const renderContextualArabicSentence = () => {
     const words = currentCard.contextSentenceArabic.split(/\s+/);
-    const targetNorm = normalizeArabicToken(currentCard.normalizedWord);
 
     return (
       <p
@@ -216,10 +233,11 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
         className="font-arabic text-3xl sm:text-4xl text-[#2C2A29] leading-[2.0] text-center"
       >
         {words.map((w, idx) => {
-          const wNorm = normalizeArabicToken(w);
-          const isTarget =
-            w === currentCard.arabicWord ||
-            (targetNorm.length > 0 && wNorm.includes(targetNorm));
+          const isTarget = isSameArabicWordInContext(
+            w,
+            currentCard.arabicWord,
+            currentCard.normalizedWord
+          );
 
           if (!isTarget) {
             return <span key={`${w}-${idx}`}>{w} </span>;
@@ -227,12 +245,15 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
 
           if (clozeMode && !confirmedComprehension) {
             return (
-              <span
+              <button
                 key={`${w}-${idx}`}
-                className="inline-block mx-1.5 px-5 py-0.5 rounded-lg bg-[#EFE9DD] border-b-2 border-[#C87D28] text-[#C87D28] font-mono-tabular text-lg align-middle"
+                type="button"
+                onClick={() => setConfirmedComprehension(true)}
+                title="Click to reveal word"
+                className="inline-block mx-1.5 px-5 py-0.5 rounded-lg bg-[#EFE9DD] hover:bg-[#E2D9C5] border-b-2 border-[#C87D28] text-[#C87D28] font-mono-tabular text-lg align-middle transition-colors cursor-pointer"
               >
                 [ ... ]
-              </span>
+              </button>
             );
           }
 
@@ -249,7 +270,7 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
     );
   };
 
-  const isListenCorrect = selectedOption === currentCard.arabicWord;
+  const isListenCorrect = selectedOption === targetDisplayWord;
 
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-8 pt-6 pb-28 md:pb-16">
@@ -311,7 +332,7 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
           <div className="flex flex-col items-center justify-center py-2">
             <button
               type="button"
-              onClick={() => speak(currentCard.arabicWord, 'ar-SA')}
+              onClick={() => speak(targetDisplayWord, 'ar-SA')}
               aria-label="Play target Arabic word audio"
               className={`w-24 h-24 rounded-3xl border-2 transition-all flex flex-col items-center justify-center gap-1.5 shadow-xs active:scale-95 ${
                 isSpeaking
@@ -330,7 +351,7 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 max-w-xl mx-auto">
             {listenOptions.map((optionWord, idx) => {
               const isSelected = selectedOption === optionWord;
-              const isTargetWord = optionWord === currentCard.arabicWord;
+              const isTargetWord = optionWord === targetDisplayWord;
               const hasAnswered = selectedOption !== null;
 
               let buttonStyle =
@@ -341,8 +362,7 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
                   buttonStyle =
                     'bg-[#2D5A3C]/15 border-[#2D5A3C] text-[#2D5A3C] ring-1 ring-[#2D5A3C]';
                 } else if (isSelected && !isTargetWord) {
-                  buttonStyle =
-                    'bg-red-50 border-red-400 text-red-900';
+                  buttonStyle = 'bg-red-50 border-red-400 text-red-900';
                 } else {
                   buttonStyle =
                     'bg-[#FAF7F2]/60 border-[#EAE2D1] text-[#8C8377] opacity-70';
@@ -395,7 +415,7 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
                 </div>
                 <p className="text-base font-bold text-[#2C2A29]">
                   <span dir="rtl" className="font-arabic text-2xl mr-2">
-                    {currentCard.arabicWord}
+                    {targetDisplayWord}
                   </span>{' '}
                   — {currentCard.englishMeaning}
                 </p>
@@ -447,7 +467,7 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
                 type="button"
                 onClick={() =>
                   speak(
-                    `${currentCard.arabicWord}. ${currentCard.contextSentenceArabic}`,
+                    `${targetDisplayWord}. ${currentCard.contextSentenceArabic}`,
                     'ar-SA'
                   )
                 }
@@ -456,9 +476,9 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
                 <Volume2 className="w-5 h-5 text-[#2D5A3C]" />
                 <span
                   dir="rtl"
-                  className="font-arabic text-4xl sm:text-5xl font-bold text-[#2C2A29]"
+                  className="font-arabic text-4xl sm:text-5xl font-bold text-[#2C2A29] leading-relaxed"
                 >
-                  {currentCard.arabicWord}
+                  {targetDisplayWord}
                 </span>
               </button>
               <p className="text-xs text-[#7A7267] mt-2">

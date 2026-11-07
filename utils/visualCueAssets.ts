@@ -5,22 +5,32 @@ export interface VisualCueMatch {
 
 const VISUAL_CUE_GALLERY: Record<string, VisualCueMatch> = {
   mosque: {
-    imageUrl: '/src/assets/images/cue_mosque_dawn_1794023569357.jpg',
-    caption: 'Mosque',
+    imageUrl: new URL(
+      '../src/assets/images/cue_mosque_dawn_1794023569357.jpg',
+      import.meta.url
+    ).href,
+    caption: 'Mosque at Dawn',
   },
   coffee: {
-    imageUrl:
-      '/src/assets/images/cue_morning_coffee_notebook_1794023570212.jpg',
-    caption: 'Coffee & Notebook',
+    imageUrl: new URL(
+      '../src/assets/images/cue_morning_coffee_notebook_1794023570212.jpg',
+      import.meta.url
+    ).href,
+    caption: 'Morning Coffee & Notebook',
   },
   library: {
-    imageUrl:
-      '/src/assets/images/cue_library_books_calligraphy_1794023571607.jpg',
+    imageUrl: new URL(
+      '../src/assets/images/cue_library_books_calligraphy_1794023571607.jpg',
+      import.meta.url
+    ).href,
     caption: 'Books & Reading',
   },
   garden: {
-    imageUrl: '/src/assets/images/cue_garden_olive_trees_1794023571429.jpg',
-    caption: 'Trees & Courtyard',
+    imageUrl: new URL(
+      '../src/assets/images/cue_garden_olive_trees_1794023571429.jpg',
+      import.meta.url
+    ).href,
+    caption: 'Courtyard & Olive Trees',
   },
 };
 
@@ -67,6 +77,7 @@ export function resolveVisualCueForKeyword(
     kw.includes('quran') ||
     kw.includes('library') ||
     kw.includes('read') ||
+    kw.includes('reading') ||
     kw.includes('page') ||
     kw.includes('study') ||
     kw.includes('school') ||
@@ -85,7 +96,8 @@ export function resolveVisualCueForKeyword(
     kw.includes('nature') ||
     kw.includes('leaf') ||
     kw.includes('flower') ||
-    kw.includes('sun')
+    kw.includes('sun') ||
+    kw.includes('morning')
   ) {
     return VISUAL_CUE_GALLERY.garden;
   }

@@ -2,6 +2,8 @@ import {
   GeminiFushaResponse,
   WordBankItem,
   normalizeArabicToken,
+  getArabicLookupKeys,
+  lookupFushaLexiconFallback,
 } from '../types';
 
 /**
@@ -56,20 +58,26 @@ export async function translateJournalToFusha(
     throw new Error('Journal entries are limited to 250 words.');
   }
 
-  // Build fast client-side lookup map for merging known Word Bank items
+  // Build prefix-aware client-side lookup map for merging known Word Bank items
   const existingMap = new Map<string, WordBankItem>();
   existingWordBank.forEach((item) => {
-    const norm = normalizeArabicToken(item.normalizedWord);
-    const arabNorm = normalizeArabicToken(item.arabicWord);
-    if (norm) existingMap.set(norm, item);
-    if (arabNorm) existingMap.set(arabNorm, item);
-    if (item.arabicWord) existingMap.set(item.arabicWord.trim(), item);
+    if (item.arabicWord) {
+      existingMap.set(item.arabicWord.trim(), item);
+    }
+    for (const key of getArabicLookupKeys(item.normalizedWord)) {
+      if (!existingMap.has(key)) existingMap.set(key, item);
+    }
+    for (const key of getArabicLookupKeys(item.arabicWord)) {
+      if (!existingMap.has(key)) existingMap.set(key, item);
+    }
   });
 
   // Compact list of previously learned Arabic words sent for Gemini cross-referencing
+  // Only include words that actually have valid meanings so Gemini doesn't omit unknown words
   const knownWordsPayload = Array.from(
     new Set(
       existingWordBank
+        .filter((w) => w.englishMeaning && w.englishMeaning !== '—')
         .map((w) => w.arabicWord.trim())
         .filter(Boolean)
     )
@@ -115,14 +123,28 @@ export async function translateJournalToFusha(
       fullArabicTranslation,
       tokens: rawTokens.map((t: any) => {
         const arabicWord = String(t?.arabicWord || '').trim();
-        const rawNorm =
-          String(t?.normalizedWord || '').trim() ||
-          normalizeArabicToken(arabicWord);
+        const providedNorm = String(t?.normalizedWord || '').trim();
+        const rawNorm = providedNorm || normalizeArabicToken(arabicWord);
 
-        const matchedBankItem =
+        let matchedBankItem =
+          existingMap.get(arabicWord) ||
           existingMap.get(rawNorm) ||
-          existingMap.get(normalizeArabicToken(arabicWord)) ||
-          existingMap.get(arabicWord);
+          existingMap.get(normalizeArabicToken(arabicWord));
+
+        if (!matchedBankItem) {
+          for (const key of [
+            ...getArabicLookupKeys(arabicWord),
+            ...getArabicLookupKeys(rawNorm),
+          ]) {
+            const candidate = existingMap.get(key);
+            if (candidate) {
+              matchedBankItem = candidate;
+              break;
+            }
+          }
+        }
+
+        const lexiconFallback = lookupFushaLexiconFallback(arabicWord, rawNorm);
 
         const isPreviouslyUsed = Boolean(
           t?.isPreviouslyUsed || matchedBankItem
@@ -137,27 +159,59 @@ export async function translateJournalToFusha(
           rawVisual.toLowerCase() !== 'null' &&
           rawVisual.toLowerCase() !== 'none'
             ? rawVisual
-            : matchedBankItem?.visualKeyword ?? null;
+            : matchedBankItem?.visualKeyword ??
+              lexiconFallback?.visualKeyword ??
+              null;
+
+        const resolvedMeaning =
+          (t?.englishMeaning &&
+          String(t.englishMeaning).trim() !== '—' &&
+          String(t.englishMeaning).trim().length > 0
+            ? String(t.englishMeaning).trim()
+            : '') ||
+          (matchedBankItem?.englishMeaning &&
+          matchedBankItem.englishMeaning !== '—'
+            ? matchedBankItem.englishMeaning
+            : '') ||
+          lexiconFallback?.englishMeaning ||
+          'word';
+
+        const resolvedRoot =
+          (t?.root &&
+          String(t.root).trim() !== '—' &&
+          String(t.root).trim().length > 0
+            ? String(t.root).trim()
+            : '') ||
+          (matchedBankItem?.root && matchedBankItem.root !== '—'
+            ? matchedBankItem.root
+            : '') ||
+          lexiconFallback?.root ||
+          normalizeArabicToken(arabicWord).split('').slice(0, 3).join(' ');
+
+        const resolvedPos =
+          (t?.partOfSpeech &&
+          String(t.partOfSpeech).trim() !== 'word' &&
+          String(t.partOfSpeech).trim().length > 0
+            ? String(t.partOfSpeech).trim()
+            : '') ||
+          (matchedBankItem?.partOfSpeech &&
+          matchedBankItem.partOfSpeech !== 'word'
+            ? matchedBankItem.partOfSpeech
+            : '') ||
+          lexiconFallback?.partOfSpeech ||
+          'noun';
 
         return {
           arabicWord,
           normalizedWord:
-            rawNorm ||
             matchedBankItem?.normalizedWord ||
+            providedNorm ||
+            getArabicLookupKeys(arabicWord).find((k) => k.length >= 2) ||
             normalizeArabicToken(arabicWord) ||
             arabicWord,
-          englishMeaning:
-            String(t?.englishMeaning || '').trim() ||
-            matchedBankItem?.englishMeaning ||
-            '—',
-          root:
-            String(t?.root || '').trim() ||
-            matchedBankItem?.root ||
-            '—',
-          partOfSpeech:
-            String(t?.partOfSpeech || '').trim() ||
-            matchedBankItem?.partOfSpeech ||
-            'word',
+          englishMeaning: resolvedMeaning,
+          root: resolvedRoot,
+          partOfSpeech: resolvedPos,
           contextSentenceArabic:
             String(t?.contextSentenceArabic || '').trim() ||
             matchedBankItem?.contextSentenceArabic ||

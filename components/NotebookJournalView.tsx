@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   Volume2,
   Feather,
@@ -15,6 +15,8 @@ import {
   WordToken,
   isWordMastered,
   normalizeArabicToken,
+  getArabicLookupKeys,
+  lookupFushaLexiconFallback,
 } from '../types';
 import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
 
@@ -78,30 +80,91 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
     [entries, activeEntryId]
   );
 
+  // Prefix-aware lookup map across all saved Word Bank items
   const wordBankLookup = useMemo(() => {
     const map = new Map<string, WordBankItem>();
     wordBank.forEach((item) => {
-      map.set(normalizeArabicToken(item.normalizedWord), item);
-      map.set(normalizeArabicToken(item.arabicWord), item);
+      if (item.arabicWord) map.set(item.arabicWord.trim(), item);
+      for (const k of getArabicLookupKeys(item.normalizedWord)) {
+        if (!map.has(k)) map.set(k, item);
+      }
+      for (const k of getArabicLookupKeys(item.arabicWord)) {
+        if (!map.has(k)) map.set(k, item);
+      }
     });
     return map;
   }, [wordBank]);
 
-  const getTokenLearningState = (token: WordToken) => {
-    const norm =
-      normalizeArabicToken(token.normalizedWord) ||
-      normalizeArabicToken(token.arabicWord);
-    const bankItem = wordBankLookup.get(norm);
-    const usageCount = bankItem ? bankItem.usageCount : token.usageCount || 1;
-    const reviewCount = bankItem
-      ? bankItem.reviewCount
-      : token.reviewCount || 0;
-    const mastered = isWordMastered({ usageCount, reviewCount });
-    const isPreviouslyUsed = Boolean(
-      token.isPreviouslyUsed || mastered || usageCount > 1 || reviewCount > 0
-    );
-    return { usageCount, reviewCount, mastered, isPreviouslyUsed };
-  };
+  const resolveTokenDetails = useCallback(
+    (token: WordToken) => {
+      let bankItem = wordBankLookup.get(token.arabicWord.trim());
+      if (!bankItem) {
+        for (const k of [
+          ...getArabicLookupKeys(token.normalizedWord),
+          ...getArabicLookupKeys(token.arabicWord),
+        ]) {
+          const match = wordBankLookup.get(k);
+          if (match) {
+            bankItem = match;
+            break;
+          }
+        }
+      }
+
+      const lexicon = lookupFushaLexiconFallback(
+        token.arabicWord,
+        token.normalizedWord
+      );
+
+      const englishMeaning =
+        token.englishMeaning && token.englishMeaning !== '—'
+          ? token.englishMeaning
+          : bankItem?.englishMeaning && bankItem.englishMeaning !== '—'
+          ? bankItem.englishMeaning
+          : lexicon?.englishMeaning || 'word';
+
+      const root =
+        token.root && token.root !== '—'
+          ? token.root
+          : bankItem?.root && bankItem.root !== '—'
+          ? bankItem.root
+          : lexicon?.root ||
+            normalizeArabicToken(token.arabicWord)
+              .split('')
+              .slice(0, 3)
+              .join(' ');
+
+      const partOfSpeech =
+        token.partOfSpeech && token.partOfSpeech !== 'word'
+          ? token.partOfSpeech
+          : bankItem?.partOfSpeech && bankItem.partOfSpeech !== 'word'
+          ? bankItem.partOfSpeech
+          : lexicon?.partOfSpeech || 'noun';
+
+      const usageCount = bankItem ? bankItem.usageCount : token.usageCount || 1;
+      const reviewCount = bankItem
+        ? bankItem.reviewCount
+        : token.reviewCount || 0;
+      const mastered = isWordMastered({ usageCount, reviewCount });
+      const isPreviouslyUsed = Boolean(
+        token.isPreviouslyUsed || mastered || usageCount > 1 || reviewCount > 0
+      );
+
+      return {
+        enrichedToken: {
+          ...token,
+          englishMeaning,
+          root,
+          partOfSpeech,
+        },
+        usageCount,
+        reviewCount,
+        mastered,
+        isPreviouslyUsed,
+      };
+    },
+    [wordBankLookup]
+  );
 
   // Parse unique entry words with POS category and `isPreviouslyUsed` status
   const parsedEntryWords = useMemo(() => {
@@ -110,17 +173,24 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
     const seen = new Set<string>();
     const list: CategorizedTokenItem[] = [];
 
-    activeEntry.tokens.forEach((token, idx) => {
+    activeEntry.tokens.forEach((rawToken, idx) => {
+      const {
+        enrichedToken,
+        usageCount,
+        reviewCount,
+        mastered,
+        isPreviouslyUsed,
+      } = resolveTokenDetails(rawToken);
+
       const normKey =
-        normalizeArabicToken(token.normalizedWord) ||
-        normalizeArabicToken(token.arabicWord) ||
-        `${token.arabicWord}-${idx}`;
+        normalizeArabicToken(enrichedToken.normalizedWord) ||
+        normalizeArabicToken(enrichedToken.arabicWord) ||
+        `${enrichedToken.arabicWord}-${idx}`;
 
       if (seen.has(normKey)) return;
       seen.add(normKey);
 
-      const state = getTokenLearningState(token);
-      const pos = (token.partOfSpeech || '').toLowerCase();
+      const pos = (enrichedToken.partOfSpeech || '').toLowerCase();
 
       let category: 'nouns' | 'verbs' | 'adjectivesParticles' =
         'adjectivesParticles';
@@ -131,27 +201,26 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
       }
 
       list.push({
-        token,
+        token: enrichedToken,
         key: `${normKey}-${idx}`,
-        ...state,
+        usageCount,
+        reviewCount,
+        mastered,
+        isPreviouslyUsed,
         category,
       });
     });
 
     return list;
-  }, [activeEntry, wordBankLookup]);
+  }, [activeEntry, resolveTokenDetails]);
 
   const categoryCounts = useMemo(() => {
     return {
       all: parsedEntryWords.length,
-      nouns: parsedEntryWords.filter(
-        (w) => !w.isPreviouslyUsed && w.category === 'nouns'
-      ).length,
-      verbs: parsedEntryWords.filter(
-        (w) => !w.isPreviouslyUsed && w.category === 'verbs'
-      ).length,
+      nouns: parsedEntryWords.filter((w) => w.category === 'nouns').length,
+      verbs: parsedEntryWords.filter((w) => w.category === 'verbs').length,
       adjectivesParticles: parsedEntryWords.filter(
-        (w) => !w.isPreviouslyUsed && w.category === 'adjectivesParticles'
+        (w) => w.category === 'adjectivesParticles'
       ).length,
       previouslyUsed: parsedEntryWords.filter((w) => w.isPreviouslyUsed).length,
     };
@@ -160,16 +229,12 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
   const filteredCategoryWords = useMemo(() => {
     switch (activeCategoryTab) {
       case 'nouns':
-        return parsedEntryWords.filter(
-          (w) => !w.isPreviouslyUsed && w.category === 'nouns'
-        );
+        return parsedEntryWords.filter((w) => w.category === 'nouns');
       case 'verbs':
-        return parsedEntryWords.filter(
-          (w) => !w.isPreviouslyUsed && w.category === 'verbs'
-        );
+        return parsedEntryWords.filter((w) => w.category === 'verbs');
       case 'adjectivesParticles':
         return parsedEntryWords.filter(
-          (w) => !w.isPreviouslyUsed && w.category === 'adjectivesParticles'
+          (w) => w.category === 'adjectivesParticles'
         );
       case 'previouslyUsed':
         return parsedEntryWords.filter((w) => w.isPreviouslyUsed);
@@ -210,8 +275,10 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
   };
 
   const handleSpeakWord = (arabicWord: string) => {
+    const cleanWord =
+      arabicWord.replace(/[.,،؛؟!":«»()[\]]/g, '').trim() || arabicWord;
     setActiveAudioWord(arabicWord);
-    speak(arabicWord, 'ar-SA');
+    speak(cleanWord, 'ar-SA');
     window.setTimeout(() => {
       setActiveAudioWord((prev) => (prev === arabicWord ? null : prev));
     }, 1100);
@@ -242,6 +309,9 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
     const { token, key, mastered, isPreviouslyUsed } = item;
     const isPlayingThis = activeAudioWord === token.arabicWord;
     const isRootOpen = Boolean(expandedRoots[key]);
+    const displayArabic =
+      token.arabicWord.replace(/[.,،؛؟!":«»()[\]]/g, '').trim() ||
+      token.arabicWord;
 
     return (
       <div
@@ -276,9 +346,9 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
         <div className="flex items-baseline gap-2.5">
           <span
             dir="rtl"
-            className="font-arabic text-2xl font-bold text-[#2C2A29] leading-none"
+            className="font-arabic text-2xl font-bold text-[#2C2A29] leading-relaxed"
           >
-            {token.arabicWord}
+            {displayArabic}
           </span>
           <span className="text-xs font-semibold text-[#5C554D]">
             {token.englishMeaning}
@@ -300,14 +370,18 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
             onClick={(e) => toggleRootReveal(key, e)}
             className="min-h-[26px] px-2 py-0.5 text-[11px] font-medium text-[#6E665E] bg-[#EFE9DD] hover:bg-[#E2D9C5] rounded-md transition-colors whitespace-nowrap shrink-0"
           >
-            {isRootOpen ? token.root : 'Root'}
+            {isRootOpen ? `Root: ${token.root}` : 'Root'}
           </button>
         )}
       </div>
     );
   };
 
-  const categoryTabs: Array<{ id: WordCategoryTab; label: string; count: number }> = [
+  const categoryTabs: Array<{
+    id: WordCategoryTab;
+    label: string;
+    count: number;
+  }> = [
     { id: 'all', label: 'All', count: categoryCounts.all },
     { id: 'nouns', label: 'Nouns', count: categoryCounts.nouns },
     { id: 'verbs', label: 'Verbs', count: categoryCounts.verbs },
@@ -399,7 +473,9 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
             <div className="px-6 sm:px-10 py-4 bg-[#F6F1E6] border-t border-[#E2D9C5] flex flex-wrap items-center justify-between gap-4">
               <div
                 className={`text-xs font-mono-tabular ${
-                  wordCount > 250 ? 'text-red-700 font-semibold' : 'text-[#6E665E]'
+                  wordCount > 250
+                    ? 'text-red-700 font-semibold'
+                    : 'text-[#6E665E]'
                 }`}
               >
                 <span>{wordCount} / 250 words</span>
@@ -527,16 +603,18 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
               lang="ar"
               className="flex flex-wrap items-baseline gap-x-5 gap-y-6 py-4 leading-relaxed"
             >
-              {activeEntry.tokens.map((token, idx) => {
-                const { mastered } = getTokenLearningState(token);
-                const tokenKey = `${token.arabicWord}-${idx}`;
+              {activeEntry.tokens.map((rawToken, idx) => {
+                const { enrichedToken, mastered } =
+                  resolveTokenDetails(rawToken);
+                const tokenKey = `${enrichedToken.arabicWord}-${idx}`;
                 const isPeeking = Boolean(peekedWords[tokenKey]);
-                const isPlayingThis = activeAudioWord === token.arabicWord;
+                const isPlayingThis =
+                  activeAudioWord === enrichedToken.arabicWord;
 
                 return (
                   <span
                     key={tokenKey}
-                    onClick={() => handleSpeakWord(token.arabicWord)}
+                    onClick={() => handleSpeakWord(enrichedToken.arabicWord)}
                     onPointerDown={() => {
                       if (mastered) togglePeekMastered(tokenKey, true);
                     }}
@@ -552,7 +630,7 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault();
-                        handleSpeakWord(token.arabicWord);
+                        handleSpeakWord(enrichedToken.arabicWord);
                       }
                     }}
                     className="inline-flex flex-col items-center select-none cursor-pointer group"
@@ -564,7 +642,7 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
                           : 'text-[#2C2A29] group-hover:text-[#2D5A3C]'
                       }`}
                     >
-                      {token.arabicWord}
+                      {enrichedToken.arabicWord}
                     </span>
 
                     {(!mastered || isPeeking) && (
@@ -572,7 +650,7 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
                         dir="ltr"
                         className="mt-0.5 text-xs font-medium text-[#6E665E] text-center"
                       >
-                        {token.englishMeaning}
+                        {enrichedToken.englishMeaning}
                       </span>
                     )}
                   </span>
@@ -604,7 +682,8 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
                   Entry Vocabulary ({parsedEntryWords.length})
                 </h2>
                 <p className="text-xs text-[#7A7267] mt-0.5">
-                  Tap any word chip for ElevenLabs Fusha audio · Tap Root to inspect its triliteral root
+                  Tap any word chip for ElevenLabs Fusha audio · Tap Root to
+                  inspect its triliteral root
                 </p>
               </div>
 

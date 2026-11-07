@@ -15,6 +15,8 @@ import {
   WordToken,
   isWordMastered,
   normalizeArabicToken,
+  getArabicLookupKeys,
+  lookupFushaLexiconFallback,
 } from './types';
 import {
   auth,
@@ -161,9 +163,22 @@ const App: React.FC = () => {
       const currentUserId = user?.uid || 'local_user';
 
       const bankMap = new Map<string, WordBankItem>();
+      const lookupToCanonicalKey = new Map<string, string>();
+
       wordBank.forEach((item) => {
-        bankMap.set(normalizeArabicToken(item.normalizedWord), item);
-        bankMap.set(normalizeArabicToken(item.arabicWord), item);
+        const canonical =
+          normalizeArabicToken(item.normalizedWord) ||
+          normalizeArabicToken(item.arabicWord);
+        if (!canonical) return;
+        bankMap.set(canonical, item);
+        for (const k of [
+          ...getArabicLookupKeys(item.normalizedWord),
+          ...getArabicLookupKeys(item.arabicWord),
+        ]) {
+          if (!lookupToCanonicalKey.has(k)) {
+            lookupToCanonicalKey.set(k, canonical);
+          }
+        }
       });
 
       const updatedWordsToPersist: Array<{
@@ -172,11 +187,35 @@ const App: React.FC = () => {
       }> = [];
 
       const enrichedTokens: WordToken[] = geminiResult.tokens.map((raw) => {
+        const candidateKeys = [
+          ...getArabicLookupKeys(raw.normalizedWord),
+          ...getArabicLookupKeys(raw.arabicWord),
+        ];
+
+        let matchedCanonical: string | undefined;
+        for (const k of candidateKeys) {
+          if (bankMap.has(k)) {
+            matchedCanonical = k;
+            break;
+          }
+          const mapped = lookupToCanonicalKey.get(k);
+          if (mapped && bankMap.has(mapped)) {
+            matchedCanonical = mapped;
+            break;
+          }
+        }
+
         const norm =
+          matchedCanonical ||
           normalizeArabicToken(raw.normalizedWord) ||
           normalizeArabicToken(raw.arabicWord) ||
           raw.arabicWord;
+
         const existing = bankMap.get(norm);
+        const lexicon = lookupFushaLexiconFallback(
+          raw.arabicWord,
+          raw.normalizedWord
+        );
         const wasPreviouslyUsed = Boolean(raw.isPreviouslyUsed || existing);
 
         const nextUsageCount = existing ? existing.usageCount + 1 : 1;
@@ -186,23 +225,33 @@ const App: React.FC = () => {
           reviewCount: nextReviewCount,
         });
 
+        const cleanArabicWord =
+          raw.arabicWord.replace(/[.,،؛؟!":«»()[\]]/g, '').trim() ||
+          raw.arabicWord;
+
         const updatedBankItem: WordBankItem = {
           id: existing ? existing.id : getWordIdForNormalized(norm),
           userId: currentUserId,
-          arabicWord: raw.arabicWord,
+          arabicWord: cleanArabicWord,
           normalizedWord: norm,
           englishMeaning:
             raw.englishMeaning && raw.englishMeaning !== '—'
               ? raw.englishMeaning
-              : existing?.englishMeaning || '—',
+              : existing?.englishMeaning && existing.englishMeaning !== '—'
+              ? existing.englishMeaning
+              : lexicon?.englishMeaning || 'word',
           root:
             raw.root && raw.root !== '—'
               ? raw.root
-              : existing?.root || '—',
+              : existing?.root && existing.root !== '—'
+              ? existing.root
+              : lexicon?.root || norm.split('').slice(0, 3).join(' '),
           partOfSpeech:
             raw.partOfSpeech && raw.partOfSpeech !== 'word'
               ? raw.partOfSpeech
-              : existing?.partOfSpeech || 'word',
+              : existing?.partOfSpeech && existing.partOfSpeech !== 'word'
+              ? existing.partOfSpeech
+              : lexicon?.partOfSpeech || 'noun',
           contextSentenceArabic:
             raw.contextSentenceArabic ||
             existing?.contextSentenceArabic ||
@@ -211,7 +260,11 @@ const App: React.FC = () => {
             raw.contextSentenceEnglish ||
             existing?.contextSentenceEnglish ||
             text,
-          visualKeyword: raw.visualKeyword ?? existing?.visualKeyword ?? null,
+          visualKeyword:
+            raw.visualKeyword ??
+            existing?.visualKeyword ??
+            lexicon?.visualKeyword ??
+            null,
           usageCount: nextUsageCount,
           reviewCount: nextReviewCount,
           isMastered: mastered,
@@ -220,6 +273,9 @@ const App: React.FC = () => {
         };
 
         bankMap.set(norm, updatedBankItem);
+        for (const k of candidateKeys) {
+          lookupToCanonicalKey.set(k, norm);
+        }
         updatedWordsToPersist.push({
           item: updatedBankItem,
           isNew: !existing,
