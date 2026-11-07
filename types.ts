@@ -16,6 +16,7 @@ export interface WordToken {
   visualKeyword: string | null;
   usageCount: number;
   reviewCount: number;
+  isPreviouslyUsed?: boolean;
 }
 
 export interface WordBankItem extends WordToken {
@@ -60,6 +61,7 @@ export interface GeminiFushaResponse {
     contextSentenceArabic: string;
     contextSentenceEnglish: string;
     visualKeyword: string | null;
+    isPreviouslyUsed: boolean;
   }>;
 }
 

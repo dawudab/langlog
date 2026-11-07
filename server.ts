@@ -16,6 +16,7 @@ interface FushaTokenPayload {
   contextSentenceArabic: string;
   contextSentenceEnglish: string;
   visualKeyword: string | null;
+  isPreviouslyUsed: boolean;
 }
 
 interface GeminiFushaTranslationPayload {
@@ -58,7 +59,10 @@ function sanitizeVisualKeyword(
  * Splits a journal entry into balanced sentence chunks (~30 words max per chunk)
  * so even 250-word entries can be translated and tokenized in parallel in ~3-5 seconds.
  */
-function chunkJournalEntryIntoSegments(text: string, maxWordsPerChunk = 30): string[] {
+function chunkJournalEntryIntoSegments(
+  text: string,
+  maxWordsPerChunk = 30
+): string[] {
   const rawSentences = text
     .split(/(?<=[.!?؟۔\n])\s+/)
     .map((s) => s.trim())
@@ -71,7 +75,6 @@ function chunkJournalEntryIntoSegments(text: string, maxWordsPerChunk = 30): str
   for (const sentence of rawSentences) {
     const words = sentence.split(/\s+/).filter(Boolean);
 
-    // If a single sentence is very long (> maxWordsPerChunk), split it at clauses or word boundaries
     if (words.length > maxWordsPerChunk) {
       if (currentSegment) {
         segments.push(currentSegment.trim());
@@ -89,7 +92,9 @@ function chunkJournalEntryIntoSegments(text: string, maxWordsPerChunk = 30): str
       currentSegment = sentence;
       currentWordCount = words.length;
     } else {
-      currentSegment = currentSegment ? `${currentSegment} ${sentence}` : sentence;
+      currentSegment = currentSegment
+        ? `${currentSegment} ${sentence}`
+        : sentence;
       currentWordCount += words.length;
     }
   }
@@ -125,6 +130,7 @@ function buildFushaLinguisticFallback(
           contextSentenceArabic: 'ذَهَبْتُ إِلَى الْمَسْجِدِ فَجْرًا.',
           contextSentenceEnglish: 'I went to the mosque at dawn.',
           visualKeyword: null,
+          isPreviouslyUsed: false,
         },
         {
           arabicWord: 'إِلَى',
@@ -135,6 +141,7 @@ function buildFushaLinguisticFallback(
           contextSentenceArabic: 'ذَهَبْتُ إِلَى الْمَسْجِدِ فَجْرًا.',
           contextSentenceEnglish: 'I went to the mosque at dawn.',
           visualKeyword: null,
+          isPreviouslyUsed: false,
         },
         {
           arabicWord: 'الْمَسْجِدِ',
@@ -145,6 +152,7 @@ function buildFushaLinguisticFallback(
           contextSentenceArabic: 'ذَهَبْتُ إِلَى الْمَسْجِدِ فَجْرًا.',
           contextSentenceEnglish: 'I went to the mosque at dawn.',
           visualKeyword: 'mosque',
+          isPreviouslyUsed: false,
         },
         {
           arabicWord: 'فَجْرًا',
@@ -155,6 +163,7 @@ function buildFushaLinguisticFallback(
           contextSentenceArabic: 'ذَهَبْتُ إِلَى الْمَسْجِدِ فَجْرًا.',
           contextSentenceEnglish: 'I went to the mosque at dawn.',
           visualKeyword: null,
+          isPreviouslyUsed: false,
         },
         {
           arabicWord: 'وَقَرَأْتُ',
@@ -165,6 +174,7 @@ function buildFushaLinguisticFallback(
           contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ.',
           contextSentenceEnglish: 'And I read the Noble Quran in tranquility.',
           visualKeyword: 'book',
+          isPreviouslyUsed: false,
         },
         {
           arabicWord: 'الْقُرْآنَ',
@@ -175,6 +185,7 @@ function buildFushaLinguisticFallback(
           contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ.',
           contextSentenceEnglish: 'And I read the Noble Quran in tranquility.',
           visualKeyword: 'book',
+          isPreviouslyUsed: false,
         },
         {
           arabicWord: 'الْكَرِيمَ',
@@ -185,6 +196,7 @@ function buildFushaLinguisticFallback(
           contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ.',
           contextSentenceEnglish: 'And I read the Noble Quran in tranquility.',
           visualKeyword: null,
+          isPreviouslyUsed: false,
         },
         {
           arabicWord: 'فِي',
@@ -195,6 +207,7 @@ function buildFushaLinguisticFallback(
           contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ.',
           contextSentenceEnglish: 'And I read the Noble Quran in tranquility.',
           visualKeyword: null,
+          isPreviouslyUsed: false,
         },
         {
           arabicWord: 'سَكِينَةٍ.',
@@ -205,6 +218,7 @@ function buildFushaLinguisticFallback(
           contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ.',
           contextSentenceEnglish: 'And I read the Noble Quran in tranquility.',
           visualKeyword: null,
+          isPreviouslyUsed: false,
         },
       ],
     };
@@ -223,6 +237,7 @@ function buildFushaLinguisticFallback(
         contextSentenceArabic: 'فِي الصَّبَاحِ شَرِبْتُ الْقَهْوَةَ.',
         contextSentenceEnglish: 'In the morning I drank coffee.',
         visualKeyword: null,
+        isPreviouslyUsed: false,
       },
       {
         arabicWord: 'الصَّبَاحِ',
@@ -233,6 +248,7 @@ function buildFushaLinguisticFallback(
         contextSentenceArabic: 'فِي الصَّبَاحِ شَرِبْتُ الْقَهْوَةَ.',
         contextSentenceEnglish: 'In the morning I drank coffee.',
         visualKeyword: null,
+        isPreviouslyUsed: false,
       },
       {
         arabicWord: 'شَرِبْتُ',
@@ -243,6 +259,7 @@ function buildFushaLinguisticFallback(
         contextSentenceArabic: 'فِي الصَّبَاحِ شَرِبْتُ الْقَهْوَةَ.',
         contextSentenceEnglish: 'In the morning I drank coffee.',
         visualKeyword: 'coffee',
+        isPreviouslyUsed: false,
       },
       {
         arabicWord: 'الْقَهْوَةَ',
@@ -253,6 +270,7 @@ function buildFushaLinguisticFallback(
         contextSentenceArabic: 'فِي الصَّبَاحِ شَرِبْتُ الْقَهْوَةَ.',
         contextSentenceEnglish: 'In the morning I drank coffee.',
         visualKeyword: 'coffee',
+        isPreviouslyUsed: false,
       },
       {
         arabicWord: 'وَكَتَبْتُ',
@@ -263,6 +281,7 @@ function buildFushaLinguisticFallback(
         contextSentenceArabic: 'وَكَتَبْتُ أَفْكَارِي فِي الدَّفْتَرِ.',
         contextSentenceEnglish: 'And I wrote my thoughts in the notebook.',
         visualKeyword: 'notebook',
+        isPreviouslyUsed: false,
       },
       {
         arabicWord: 'أَفْكَارِي',
@@ -273,6 +292,7 @@ function buildFushaLinguisticFallback(
         contextSentenceArabic: 'وَكَتَبْتُ أَفْكَارِي فِي الدَّفْتَرِ.',
         contextSentenceEnglish: 'And I wrote my thoughts in the notebook.',
         visualKeyword: null,
+        isPreviouslyUsed: false,
       },
       {
         arabicWord: 'فِي',
@@ -283,6 +303,7 @@ function buildFushaLinguisticFallback(
         contextSentenceArabic: 'وَكَتَبْتُ أَفْكَارِي فِي الدَّفْتَرِ.',
         contextSentenceEnglish: 'And I wrote my thoughts in the notebook.',
         visualKeyword: null,
+        isPreviouslyUsed: false,
       },
       {
         arabicWord: 'الدَّفْتَرِ.',
@@ -293,6 +314,7 @@ function buildFushaLinguisticFallback(
         contextSentenceArabic: 'وَكَتَبْتُ أَفْكَارِي فِي الدَّفْتَرِ.',
         contextSentenceEnglish: 'And I wrote my thoughts in the notebook.',
         visualKeyword: 'notebook',
+        isPreviouslyUsed: false,
       },
     ],
   };
@@ -384,7 +406,7 @@ async function startServer() {
 
   // API Route: Process Journal Entry into Vocalized Fusha Arabic & Exhaustive Interlinear Tokens
   app.post('/api/process-entry', async (req: Request, res: Response) => {
-    const { journalEntry } = req.body;
+    const { journalEntry, existingWords } = req.body;
 
     if (!journalEntry || typeof journalEntry !== 'string') {
       return res.status(400).json({
@@ -396,6 +418,10 @@ async function startServer() {
     if (!apiKey) {
       return res.json(buildFushaLinguisticFallback(journalEntry));
     }
+
+    const knownWordsArray: string[] = Array.isArray(existingWords)
+      ? existingWords.map((w) => String(w || '').trim()).filter(Boolean)
+      : [];
 
     try {
       const ai = getGeminiClient();
@@ -419,37 +445,43 @@ async function startServer() {
                   type: Type.STRING,
                   description: 'Vocalized Fusha Arabic word (e.g., الْمَسْجِدِ).',
                 },
+                isPreviouslyUsed: {
+                  type: Type.BOOLEAN,
+                  description:
+                    'True if this word already exists in the user previously learned words list.',
+                },
                 normalizedWord: {
                   type: Type.STRING,
-                  description: 'Unvocalized normalized base form (e.g., مسجد).',
+                  nullable: true,
+                  description:
+                    'Unvocalized normalized base form (omit or null if isPreviouslyUsed is true).',
                 },
                 englishMeaning: {
                   type: Type.STRING,
-                  description: 'Concise English meaning (e.g., the mosque).',
+                  nullable: true,
+                  description:
+                    'Concise English meaning (omit or null if isPreviouslyUsed is true).',
                 },
                 root: {
                   type: Type.STRING,
-                  description: 'Spaced triliteral root (e.g., س ج د).',
+                  nullable: true,
+                  description:
+                    'Spaced triliteral root (omit or null if isPreviouslyUsed is true).',
                 },
                 partOfSpeech: {
                   type: Type.STRING,
-                  description: 'Part of speech (noun, verb, adjective, particle).',
+                  nullable: true,
+                  description:
+                    'Part of speech: noun, verb, adjective, particle (omit or null if isPreviouslyUsed is true).',
                 },
                 visualKeyword: {
                   type: Type.STRING,
                   nullable: true,
                   description:
-                    "ONLY provide a keyword if the word is a highly visual, concrete noun or simple, physical action (e.g., 'mosque', 'tree', 'coffee'). If abstract, complex, emotional, or a grammar particle, return null or an empty string.",
+                    "ONLY provide a keyword if the word is a highly visual, concrete noun or simple, physical action (e.g., 'mosque', 'tree', 'coffee'). If abstract, complex, emotional, a grammar particle, or isPreviouslyUsed is true, return null or an empty string.",
                 },
               },
-              required: [
-                'arabicWord',
-                'normalizedWord',
-                'englishMeaning',
-                'root',
-                'partOfSpeech',
-                'visualKeyword',
-              ],
+              required: ['arabicWord', 'isPreviouslyUsed'],
             },
           },
         },
@@ -459,17 +491,23 @@ async function startServer() {
       const translateSegment = async (segmentText: string) => {
         const prompt = `You are an expert Classical & Modern Standard Arabic (al-'Arabiyyah al-Fusha / Quranic Arabic) scholar.
 
-The user will submit journal entries up to 250 words. You MUST translate the entire entry into Fusha Arabic and extract EVERY SINGLE WORD into the tokens array. Do not summarize or skip words; if the entry is 150 words, the tokens array must contain 150 items in sequential order.
+The user will submit journal entries up to 250 words. You MUST translate the entire entry into Fusha Arabic and extract EVERY SINGLE WORD into the tokens array sequentially. Do not summarize or skip words.
+
+You will be provided with an array of the user's previously learned words. If a word in the new entry already exists in this list, simply return its exact Arabic word and a flag "isPreviouslyUsed": true, omitting the meaning, root, and context sentence to save output tokens. The client will merge the existing data.
 
 Translate the user's journal entry into strictly eloquent, authentic Fusha Arabic (Modern Standard / Quranic Arabic) with FULL Harakat (complete vowel markings / tashkeel on every word). Zero colloquial dialects.
 
-For every token in "tokens":
+For every NEW token (where "isPreviouslyUsed" is false):
 - "arabicWord": The exact vocalized Fusha Arabic word as it appears in fullArabicTranslation (with full Harakat).
+- "isPreviouslyUsed": false.
 - "normalizedWord": The base unvocalized Arabic form without Harakat or definite article "ال" when appropriate (e.g., "مسجد" for "الْمَسْجِدِ").
 - "englishMeaning": Concise contextual English meaning for this word (1–4 words).
 - "root": Spaced 3-letter Arabic triliteral root (e.g., "س ج د", "ك ت ب"). For particles without a 3-letter root, provide the particle letters spaced (e.g., "ف ي").
 - "partOfSpeech": "noun", "verb", "adjective", "particle", or "pronoun".
 - "visualKeyword": For \`visualKeyword\`, ONLY provide a keyword if the word is a highly visual, concrete noun or simple, physical action (e.g., 'mosque', 'tree', 'coffee'). If the entry or word is abstract, complex, emotional, or a grammar particle, you MUST return \`null\` or an empty string for \`visualKeyword\`.
+
+Previously Learned Words Array:
+${JSON.stringify(knownWordsArray)}
 
 User's Journal Entry:
 "${segmentText}"`;
@@ -514,18 +552,22 @@ User's Journal Entry:
 
         const mappedTokens: FushaTokenPayload[] = rawTokens.map((t) => {
           const arabicWord = String(t.arabicWord || '').trim();
-          const pos = String(t.partOfSpeech || 'word').trim();
+          const pos = String(t.partOfSpeech || '').trim();
+          const isPrev = Boolean(t.isPreviouslyUsed);
           return {
             arabicWord,
             normalizedWord:
               String(t.normalizedWord || '').trim() ||
               normalizeArabicServer(arabicWord),
             englishMeaning: String(t.englishMeaning || '').trim(),
-            root: String(t.root || '—').trim(),
+            root: String(t.root || '').trim(),
             partOfSpeech: pos,
             contextSentenceArabic: segmentArabic,
             contextSentenceEnglish: segmentText,
-            visualKeyword: sanitizeVisualKeyword(t.visualKeyword, pos),
+            visualKeyword: isPrev
+              ? null
+              : sanitizeVisualKeyword(t.visualKeyword, pos || 'word'),
+            isPreviouslyUsed: isPrev,
           };
         });
 

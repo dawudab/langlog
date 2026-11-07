@@ -155,7 +155,7 @@ const App: React.FC = () => {
   // Submit a new journal entry -> Gemini translates to vocalized Fusha & updates Word Bank
   const handleSubmitJournalEntry = useCallback(
     async (text: string): Promise<JournalEntry> => {
-      const geminiResult = await translateJournalToFusha(text);
+      const geminiResult = await translateJournalToFusha(text, wordBank);
       const nowIso = new Date().toISOString();
       const entryId = `entry_${Date.now()}`;
       const currentUserId = user?.uid || 'local_user';
@@ -163,6 +163,7 @@ const App: React.FC = () => {
       const bankMap = new Map<string, WordBankItem>();
       wordBank.forEach((item) => {
         bankMap.set(normalizeArabicToken(item.normalizedWord), item);
+        bankMap.set(normalizeArabicToken(item.arabicWord), item);
       });
 
       const updatedWordsToPersist: Array<{
@@ -176,6 +177,7 @@ const App: React.FC = () => {
           normalizeArabicToken(raw.arabicWord) ||
           raw.arabicWord;
         const existing = bankMap.get(norm);
+        const wasPreviouslyUsed = Boolean(raw.isPreviouslyUsed || existing);
 
         const nextUsageCount = existing ? existing.usageCount + 1 : 1;
         const nextReviewCount = existing ? existing.reviewCount : 0;
@@ -189,13 +191,27 @@ const App: React.FC = () => {
           userId: currentUserId,
           arabicWord: raw.arabicWord,
           normalizedWord: norm,
-          englishMeaning: raw.englishMeaning,
-          root: raw.root,
-          partOfSpeech: raw.partOfSpeech,
+          englishMeaning:
+            raw.englishMeaning && raw.englishMeaning !== '—'
+              ? raw.englishMeaning
+              : existing?.englishMeaning || '—',
+          root:
+            raw.root && raw.root !== '—'
+              ? raw.root
+              : existing?.root || '—',
+          partOfSpeech:
+            raw.partOfSpeech && raw.partOfSpeech !== 'word'
+              ? raw.partOfSpeech
+              : existing?.partOfSpeech || 'word',
           contextSentenceArabic:
-            raw.contextSentenceArabic || geminiResult.fullArabicTranslation,
-          contextSentenceEnglish: raw.contextSentenceEnglish || text,
-          visualKeyword: raw.visualKeyword ?? null,
+            raw.contextSentenceArabic ||
+            existing?.contextSentenceArabic ||
+            geminiResult.fullArabicTranslation,
+          contextSentenceEnglish:
+            raw.contextSentenceEnglish ||
+            existing?.contextSentenceEnglish ||
+            text,
+          visualKeyword: raw.visualKeyword ?? existing?.visualKeyword ?? null,
           usageCount: nextUsageCount,
           reviewCount: nextReviewCount,
           isMastered: mastered,
@@ -212,14 +228,15 @@ const App: React.FC = () => {
         return {
           arabicWord: raw.arabicWord,
           normalizedWord: norm,
-          englishMeaning: raw.englishMeaning,
-          root: raw.root,
-          partOfSpeech: raw.partOfSpeech,
+          englishMeaning: updatedBankItem.englishMeaning,
+          root: updatedBankItem.root,
+          partOfSpeech: updatedBankItem.partOfSpeech,
           contextSentenceArabic: updatedBankItem.contextSentenceArabic,
           contextSentenceEnglish: updatedBankItem.contextSentenceEnglish,
           visualKeyword: updatedBankItem.visualKeyword,
           usageCount: nextUsageCount,
           reviewCount: nextReviewCount,
+          isPreviouslyUsed: wasPreviouslyUsed,
         };
       });
 

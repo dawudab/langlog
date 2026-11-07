@@ -8,7 +8,6 @@ import {
   Loader2,
   AlertCircle,
   Check,
-  Sparkles,
 } from 'lucide-react';
 import {
   JournalEntry,
@@ -32,13 +31,21 @@ interface NotebookJournalViewProps {
   onNavigateToWordBank: () => void;
 }
 
+type WordCategoryTab =
+  | 'all'
+  | 'nouns'
+  | 'verbs'
+  | 'adjectivesParticles'
+  | 'previouslyUsed';
+
 interface CategorizedTokenItem {
   token: WordToken;
   key: string;
   usageCount: number;
   reviewCount: number;
   mastered: boolean;
-  previouslyLearned: boolean;
+  isPreviouslyUsed: boolean;
+  category: 'nouns' | 'verbs' | 'adjectivesParticles';
 }
 
 const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
@@ -61,6 +68,8 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
   const [expandedRoots, setExpandedRoots] = useState<Record<string, boolean>>(
     {}
   );
+  const [activeCategoryTab, setActiveCategoryTab] =
+    useState<WordCategoryTab>('all');
 
   const { speak, isSpeaking, stop } = useSpeechSynthesis();
 
@@ -88,27 +97,18 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
       ? bankItem.reviewCount
       : token.reviewCount || 0;
     const mastered = isWordMastered({ usageCount, reviewCount });
-    const previouslyLearned = mastered || usageCount > 1 || reviewCount > 0;
-    return { usageCount, reviewCount, mastered, previouslyLearned };
+    const isPreviouslyUsed = Boolean(
+      token.isPreviouslyUsed || mastered || usageCount > 1 || reviewCount > 0
+    );
+    return { usageCount, reviewCount, mastered, isPreviouslyUsed };
   };
 
-  // Deduplicate entry tokens and group them into logical categories + "Previously Learned"
-  const categorizedWords = useMemo(() => {
-    if (!activeEntry) {
-      return {
-        nouns: [] as CategorizedTokenItem[],
-        verbs: [] as CategorizedTokenItem[],
-        adjectivesAndParticles: [] as CategorizedTokenItem[],
-        previouslyLearned: [] as CategorizedTokenItem[],
-        totalUnique: 0,
-      };
-    }
+  // Parse unique entry words with POS category and `isPreviouslyUsed` status
+  const parsedEntryWords = useMemo(() => {
+    if (!activeEntry) return [] as CategorizedTokenItem[];
 
     const seen = new Set<string>();
-    const nouns: CategorizedTokenItem[] = [];
-    const verbs: CategorizedTokenItem[] = [];
-    const adjectivesAndParticles: CategorizedTokenItem[] = [];
-    const previouslyLearned: CategorizedTokenItem[] = [];
+    const list: CategorizedTokenItem[] = [];
 
     activeEntry.tokens.forEach((token, idx) => {
       const normKey =
@@ -120,35 +120,64 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
       seen.add(normKey);
 
       const state = getTokenLearningState(token);
-      const item: CategorizedTokenItem = {
+      const pos = (token.partOfSpeech || '').toLowerCase();
+
+      let category: 'nouns' | 'verbs' | 'adjectivesParticles' =
+        'adjectivesParticles';
+      if (pos.includes('noun')) {
+        category = 'nouns';
+      } else if (pos.includes('verb')) {
+        category = 'verbs';
+      }
+
+      list.push({
         token,
         key: `${normKey}-${idx}`,
         ...state,
-      };
-
-      if (state.previouslyLearned) {
-        previouslyLearned.push(item);
-        return;
-      }
-
-      const pos = (token.partOfSpeech || '').toLowerCase();
-      if (pos.includes('noun')) {
-        nouns.push(item);
-      } else if (pos.includes('verb')) {
-        verbs.push(item);
-      } else {
-        adjectivesAndParticles.push(item);
-      }
+        category,
+      });
     });
 
-    return {
-      nouns,
-      verbs,
-      adjectivesAndParticles,
-      previouslyLearned,
-      totalUnique: seen.size,
-    };
+    return list;
   }, [activeEntry, wordBankLookup]);
+
+  const categoryCounts = useMemo(() => {
+    return {
+      all: parsedEntryWords.length,
+      nouns: parsedEntryWords.filter(
+        (w) => !w.isPreviouslyUsed && w.category === 'nouns'
+      ).length,
+      verbs: parsedEntryWords.filter(
+        (w) => !w.isPreviouslyUsed && w.category === 'verbs'
+      ).length,
+      adjectivesParticles: parsedEntryWords.filter(
+        (w) => !w.isPreviouslyUsed && w.category === 'adjectivesParticles'
+      ).length,
+      previouslyUsed: parsedEntryWords.filter((w) => w.isPreviouslyUsed).length,
+    };
+  }, [parsedEntryWords]);
+
+  const filteredCategoryWords = useMemo(() => {
+    switch (activeCategoryTab) {
+      case 'nouns':
+        return parsedEntryWords.filter(
+          (w) => !w.isPreviouslyUsed && w.category === 'nouns'
+        );
+      case 'verbs':
+        return parsedEntryWords.filter(
+          (w) => !w.isPreviouslyUsed && w.category === 'verbs'
+        );
+      case 'adjectivesParticles':
+        return parsedEntryWords.filter(
+          (w) => !w.isPreviouslyUsed && w.category === 'adjectivesParticles'
+        );
+      case 'previouslyUsed':
+        return parsedEntryWords.filter((w) => w.isPreviouslyUsed);
+      case 'all':
+      default:
+        return parsedEntryWords;
+    }
+  }, [parsedEntryWords, activeCategoryTab]);
 
   const wordCount =
     draftText.trim().length === 0 ? 0 : draftText.trim().split(/\s+/).length;
@@ -168,6 +197,7 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
       const created = await onSubmitJournalEntry(draftText.trim());
       if (created) {
         setDraftText('');
+        setActiveCategoryTab('all');
         onSelectEntry(created.id);
       }
     } catch (error: any) {
@@ -208,8 +238,8 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
     day: 'numeric',
   }).format(new Date());
 
-  const renderWordChip = (item: CategorizedTokenItem, isLearnedGroup = false) => {
-    const { token, key, mastered } = item;
+  const renderWordChip = (item: CategorizedTokenItem) => {
+    const { token, key, mastered, isPreviouslyUsed } = item;
     const isPlayingThis = activeAudioWord === token.arabicWord;
     const isRootOpen = Boolean(expandedRoots[key]);
 
@@ -228,7 +258,7 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
         className={`group inline-flex items-center gap-3 px-4 py-2.5 rounded-2xl border transition-all cursor-pointer select-none ${
           isPlayingThis
             ? 'bg-[#2D5A3C]/12 border-[#2D5A3C] shadow-xs'
-            : isLearnedGroup
+            : isPreviouslyUsed
             ? 'bg-[#F4EFE4]/85 border-[#DDD4C0] hover:border-[#2D5A3C]/60 hover:bg-[#EFE8D8]'
             : 'bg-[#FAF7F2] border-[#E5DEC9] hover:border-[#C87D28] hover:bg-[#F5EFE2]'
         }`}
@@ -276,6 +306,22 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
       </div>
     );
   };
+
+  const categoryTabs: Array<{ id: WordCategoryTab; label: string; count: number }> = [
+    { id: 'all', label: 'All', count: categoryCounts.all },
+    { id: 'nouns', label: 'Nouns', count: categoryCounts.nouns },
+    { id: 'verbs', label: 'Verbs', count: categoryCounts.verbs },
+    {
+      id: 'adjectivesParticles',
+      label: 'Adjectives & Particles',
+      count: categoryCounts.adjectivesParticles,
+    },
+    {
+      id: 'previouslyUsed',
+      label: 'Previously Used',
+      count: categoryCounts.previouslyUsed,
+    },
+  ];
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-8 pt-6 pb-28 md:pb-16">
@@ -550,15 +596,15 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
             </div>
           </section>
 
-          {/* 3. CATEGORIZED WORD CHIPS & "PREVIOUSLY LEARNED" SECTION */}
-          <section className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] p-6 sm:p-8 shadow-xs space-y-6">
-            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#EAE2D1]">
+          {/* 3. SCROLLABLE, CATEGORIZED WORD LIST WITH FILTER TABS */}
+          <section className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] p-6 sm:p-8 shadow-xs space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="font-serif-notebook text-xl font-bold text-[#2C2A29]">
-                  Entry Vocabulary
+                  Entry Vocabulary ({parsedEntryWords.length})
                 </h2>
                 <p className="text-xs text-[#7A7267] mt-0.5">
-                  Tap any word chip to hear pronunciation · Tap Root to inspect its triliteral root
+                  Tap any word chip for ElevenLabs Fusha audio · Tap Root to inspect its triliteral root
                 </p>
               </div>
 
@@ -571,82 +617,49 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
               </button>
             </div>
 
-            <div className="space-y-6">
-              {/* Nouns */}
-              {categorizedWords.nouns.length > 0 && (
-                <div className="space-y-2.5">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#2D5A3C]">
-                      Nouns
-                    </h3>
-                    <span className="text-xs font-mono-tabular text-[#8C8377]">
-                      ({categorizedWords.nouns.length})
+            {/* Category Tabs: All, Nouns, Verbs, Adjectives & Particles, Previously Used */}
+            <div
+              role="tablist"
+              aria-label="Vocabulary categories"
+              className="flex flex-wrap items-center gap-1.5 p-1.5 bg-[#EFE9DD] rounded-xl"
+            >
+              {categoryTabs.map((tab) => {
+                const isActive = activeCategoryTab === tab.id;
+                return (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={isActive}
+                    onClick={() => setActiveCategoryTab(tab.id)}
+                    className={`min-h-[36px] px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                      isActive
+                        ? 'bg-[#FDFBF7] text-[#2C2A29] shadow-xs'
+                        : 'text-[#6E665E] hover:text-[#2C2A29]'
+                    }`}
+                  >
+                    <span>{tab.label}</span>
+                    <span
+                      className={`text-[11px] font-mono-tabular ${
+                        isActive ? 'text-[#2D5A3C]' : 'text-[#8C8377]'
+                      }`}
+                    >
+                      ({tab.count})
                     </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2.5">
-                    {categorizedWords.nouns.map((item) => renderWordChip(item))}
-                  </div>
-                </div>
-              )}
+                  </button>
+                );
+              })}
+            </div>
 
-              {/* Verbs */}
-              {categorizedWords.verbs.length > 0 && (
-                <div className="space-y-2.5">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#C87D28]">
-                      Verbs
-                    </h3>
-                    <span className="text-xs font-mono-tabular text-[#8C8377]">
-                      ({categorizedWords.verbs.length})
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2.5">
-                    {categorizedWords.verbs.map((item) => renderWordChip(item))}
-                  </div>
-                </div>
-              )}
-
-              {/* Adjectives & Particles */}
-              {categorizedWords.adjectivesAndParticles.length > 0 && (
-                <div className="space-y-2.5">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#6E665E]">
-                      Adjectives &amp; Particles
-                    </h3>
-                    <span className="text-xs font-mono-tabular text-[#8C8377]">
-                      ({categorizedWords.adjectivesAndParticles.length})
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2.5">
-                    {categorizedWords.adjectivesAndParticles.map((item) =>
-                      renderWordChip(item)
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Distinct "Previously Learned" Section */}
-              {categorizedWords.previouslyLearned.length > 0 && (
-                <div className="pt-5 border-t border-[#EAE2D1] space-y-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="w-3.5 h-3.5 text-[#2D5A3C]" />
-                      <h3 className="text-xs font-bold uppercase tracking-wider text-[#2C2A29]">
-                        Previously Learned &amp; Mastered
-                      </h3>
-                      <span className="text-xs font-mono-tabular text-[#8C8377]">
-                        ({categorizedWords.previouslyLearned.length})
-                      </span>
-                    </div>
-                    <span className="text-[11px] text-[#7A7267]">
-                      Encountered in earlier entries or study sessions
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap gap-2.5">
-                    {categorizedWords.previouslyLearned.map((item) =>
-                      renderWordChip(item, true)
-                    )}
-                  </div>
+            {/* Fixed-Height Scrollable Word List Container */}
+            <div className="max-h-64 overflow-y-auto border-t border-b border-stone-200 py-4 notebook-scrollbar">
+              {filteredCategoryWords.length === 0 ? (
+                <p className="text-xs text-[#7A7267] text-center py-8">
+                  No words in this category for this entry.
+                </p>
+              ) : (
+                <div className="flex flex-wrap gap-2.5 pr-1">
+                  {filteredCategoryWords.map((item) => renderWordChip(item))}
                 </div>
               )}
             </div>

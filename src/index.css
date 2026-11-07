@@ -44,6 +44,30 @@
   line-height: 40px;
 }
 
+/* Minimal Warm Notebook Scrollbar */
+.notebook-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: #D5CBB8 transparent;
+}
+
+.notebook-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.notebook-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.notebook-scrollbar::-webkit-scrollbar-thumb {
+  background-color: #D5CBB8;
+  border-radius: 9999px;
+}
+
+.notebook-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: #B8AD98;
+}
+
 /* Calming Ink & Page Turn Animation */
 @keyframes pageTurnPulse {
   0%, 100% {

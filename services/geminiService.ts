@@ -1,18 +1,29 @@
-import { GeminiFushaResponse } from '../types';
+import {
+  GeminiFushaResponse,
+  WordBankItem,
+  normalizeArabicToken,
+} from '../types';
 
 /**
  * Shared system prompt specification enforced by the Gemini endpoint (/api/process-entry).
- * Enforces exhaustive word extraction up to 250 words, no transliteration, and concrete-only visualKeyword.
+ * Enforces:
+ * 1. 250-word limit & exhaustive sequential word extraction into `tokens`.
+ * 2. Complete removal of `transliteration`.
+ * 3. Word Bank cross-referencing via `isPreviouslyUsed: true` to save output tokens.
+ * 4. Concrete-only `visualKeyword` rule.
  */
 export const GEMINI_FUSHA_PROMPT_INSTRUCTIONS = `You are an expert Classical & Modern Standard Arabic (al-'Arabiyyah al-Fusha / Quranic Arabic) scholar.
 
-The user will submit journal entries up to 250 words. You MUST translate the entire entry into Fusha Arabic and extract EVERY SINGLE WORD into the tokens array. Do not summarize or skip words; if the entry is 150 words, the tokens array must contain 150 items in sequential order.
+The user will submit journal entries up to 250 words. You MUST translate the entire entry into Fusha Arabic and extract EVERY SINGLE WORD into the tokens array sequentially. Do not summarize or skip words.
+
+You will be provided with an array of the user's previously learned words. If a word in the new entry already exists in this list, simply return its exact Arabic word and a flag "isPreviouslyUsed": true, omitting the meaning, root, and context sentence to save output tokens. The client will merge the existing data.
 
 Translate the user's journal entry into strictly vocalized Fusha Arabic (Modern Standard / Quranic Arabic) with full Harakat (vowel markings) on every word. Zero colloquial dialects.
 For \`visualKeyword\`, ONLY provide a keyword if the word is a highly visual, concrete noun or simple, physical action (e.g., 'mosque', 'tree', 'coffee'). If the entry or word is abstract, complex, emotional, or a grammar particle, you MUST return \`null\` or an empty string for \`visualKeyword\`.`;
 
 /**
- * Expected JSON output schema for Gemini (transliteration completely removed).
+ * Expected JSON output schema fields for Gemini (transliteration completely removed,
+ * and `isPreviouslyUsed` supported for token-saving Word Bank cross-referencing).
  */
 export const GEMINI_FUSHA_SCHEMA_FIELDS = [
   'arabicWord',
@@ -20,19 +31,20 @@ export const GEMINI_FUSHA_SCHEMA_FIELDS = [
   'englishMeaning',
   'root',
   'partOfSpeech',
-  'contextSentenceArabic',
-  'contextSentenceEnglish',
   'visualKeyword',
+  'isPreviouslyUsed',
 ] as const;
 
 const REQUEST_TIMEOUT_MS = 60000;
 
 /**
- * Calls the server-side Gemini endpoint (/api/process-entry) with a strict timeout
- * so the UI never hangs indefinitely.
+ * Calls the server-side Gemini endpoint (/api/process-entry) with the user's
+ * `existingWordBank` so known words are flagged with `isPreviouslyUsed: true`
+ * and merged with existing meaning, root, and context data on the client.
  */
 export async function translateJournalToFusha(
-  journalEntry: string
+  journalEntry: string,
+  existingWordBank: WordBankItem[] = []
 ): Promise<GeminiFushaResponse> {
   const trimmed = journalEntry.trim();
   if (!trimmed) {
@@ -43,6 +55,25 @@ export async function translateJournalToFusha(
   if (wordList.length > 250) {
     throw new Error('Journal entries are limited to 250 words.');
   }
+
+  // Build fast client-side lookup map for merging known Word Bank items
+  const existingMap = new Map<string, WordBankItem>();
+  existingWordBank.forEach((item) => {
+    const norm = normalizeArabicToken(item.normalizedWord);
+    const arabNorm = normalizeArabicToken(item.arabicWord);
+    if (norm) existingMap.set(norm, item);
+    if (arabNorm) existingMap.set(arabNorm, item);
+    if (item.arabicWord) existingMap.set(item.arabicWord.trim(), item);
+  });
+
+  // Compact list of previously learned Arabic words sent for Gemini cross-referencing
+  const knownWordsPayload = Array.from(
+    new Set(
+      existingWordBank
+        .map((w) => w.arabicWord.trim())
+        .filter(Boolean)
+    )
+  ).slice(0, 300);
 
   const controller = new AbortController();
   const timeoutId = window.setTimeout(
@@ -56,7 +87,10 @@ export async function translateJournalToFusha(
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ journalEntry: trimmed }),
+      body: JSON.stringify({
+        journalEntry: trimmed,
+        existingWords: knownWordsPayload,
+      }),
       signal: controller.signal,
     });
 
@@ -80,6 +114,20 @@ export async function translateJournalToFusha(
     return {
       fullArabicTranslation,
       tokens: rawTokens.map((t: any) => {
+        const arabicWord = String(t?.arabicWord || '').trim();
+        const rawNorm =
+          String(t?.normalizedWord || '').trim() ||
+          normalizeArabicToken(arabicWord);
+
+        const matchedBankItem =
+          existingMap.get(rawNorm) ||
+          existingMap.get(normalizeArabicToken(arabicWord)) ||
+          existingMap.get(arabicWord);
+
+        const isPreviouslyUsed = Boolean(
+          t?.isPreviouslyUsed || matchedBankItem
+        );
+
         const rawVisual =
           t?.visualKeyword !== null && t?.visualKeyword !== undefined
             ? String(t.visualKeyword).trim()
@@ -89,21 +137,37 @@ export async function translateJournalToFusha(
           rawVisual.toLowerCase() !== 'null' &&
           rawVisual.toLowerCase() !== 'none'
             ? rawVisual
-            : null;
+            : matchedBankItem?.visualKeyword ?? null;
 
         return {
-          arabicWord: String(t?.arabicWord || '').trim(),
-          normalizedWord: String(t?.normalizedWord || '').trim(),
-          englishMeaning: String(t?.englishMeaning || '').trim(),
-          root: String(t?.root || '—').trim(),
-          partOfSpeech: String(t?.partOfSpeech || 'word').trim(),
-          contextSentenceArabic: String(
-            t?.contextSentenceArabic || fullArabicTranslation
-          ).trim(),
-          contextSentenceEnglish: String(
-            t?.contextSentenceEnglish || trimmed
-          ).trim(),
+          arabicWord,
+          normalizedWord:
+            rawNorm ||
+            matchedBankItem?.normalizedWord ||
+            normalizeArabicToken(arabicWord) ||
+            arabicWord,
+          englishMeaning:
+            String(t?.englishMeaning || '').trim() ||
+            matchedBankItem?.englishMeaning ||
+            '—',
+          root:
+            String(t?.root || '').trim() ||
+            matchedBankItem?.root ||
+            '—',
+          partOfSpeech:
+            String(t?.partOfSpeech || '').trim() ||
+            matchedBankItem?.partOfSpeech ||
+            'word',
+          contextSentenceArabic:
+            String(t?.contextSentenceArabic || '').trim() ||
+            matchedBankItem?.contextSentenceArabic ||
+            fullArabicTranslation,
+          contextSentenceEnglish:
+            String(t?.contextSentenceEnglish || '').trim() ||
+            matchedBankItem?.contextSentenceEnglish ||
+            trimmed,
           visualKeyword: cleanedVisual,
+          isPreviouslyUsed,
         };
       }),
     };
