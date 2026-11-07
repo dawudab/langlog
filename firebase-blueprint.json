@@ -2,7 +2,7 @@
   "entities": {
     "JournalEntry": {
       "title": "JournalEntry",
-      "description": "A daily notebook journal entry written in English/Arabic and translated into vocalized Fusha Arabic with interactive interlinear tokens.",
+      "description": "A daily notebook journal entry (up to 250 words) translated into vocalized Fusha Arabic with exhaustive word-by-word interlinear tokens.",
       "type": "object",
       "properties": {
         "userId": {
@@ -26,7 +26,7 @@
         },
         "tokens": {
           "type": "array",
-          "description": "Bounded list of tokenized Fusha Arabic words with meanings, roots, and context sentences (max 80 tokens)."
+          "description": "Bounded list of tokenized Fusha Arabic words with meanings, roots, and context sentences (max 350 tokens)."
         },
         "createdAt": {
           "type": "string",
@@ -78,12 +78,6 @@
           "minLength": 1,
           "maxLength": 500
         },
-        "transliteration": {
-          "type": "string",
-          "description": "Latin transliteration for pronunciation guidance.",
-          "minLength": 1,
-          "maxLength": 200
-        },
         "root": {
           "type": "string",
           "description": "Spaced 3-letter Arabic triliteral root (e.g., س ج د).",
@@ -110,8 +104,8 @@
         },
         "visualKeyword": {
           "type": "string",
-          "description": "Visual cue prompt keywords for contextual flashcards.",
-          "minLength": 1,
+          "description": "Visual cue keyword for concrete nouns/actions, or empty string for abstract words/particles.",
+          "minLength": 0,
           "maxLength": 300
         },
         "usageCount": {
@@ -142,7 +136,6 @@
         "arabicWord",
         "normalizedWord",
         "englishMeaning",
-        "transliteration",
         "root",
         "partOfSpeech",
         "contextSentenceArabic",

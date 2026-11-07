@@ -31,7 +31,7 @@ const Header: React.FC<HeaderProps> = ({
     },
     {
       id: 'wordBank',
-      label: `Word Bank (${wordBankCount})`,
+      label: wordBankCount > 0 ? `Word Bank (${wordBankCount})` : 'Word Bank',
       mobileLabel: 'Word Bank',
       icon: <BookMarked className="w-5 h-5" />,
     },
@@ -43,10 +43,7 @@ const Header: React.FC<HeaderProps> = ({
     },
     {
       id: 'profile',
-      label:
-        masteredCount > 0
-          ? `Profile & Stats (${masteredCount} Mastered)`
-          : 'Profile & Stats',
+      label: masteredCount > 0 ? `Profile (${masteredCount})` : 'Profile',
       mobileLabel: 'Profile',
       icon: <UserCheck className="w-5 h-5" />,
     },
@@ -54,9 +51,7 @@ const Header: React.FC<HeaderProps> = ({
 
   return (
     <>
-      {/* Strict 3-Zone Top Bar Contract */}
       <header className="sticky top-0 z-30 h-16 px-4 sm:px-8 bg-[#FAF7F2]/95 backdrop-blur-xs border-b border-[#E6DEC8] flex items-center justify-between gap-8">
-        {/* Zone 1: Single text element wordmark */}
         <a
           href="#journal"
           onClick={(e) => {
@@ -68,7 +63,6 @@ const Header: React.FC<HeaderProps> = ({
           Fusha Notebook
         </a>
 
-        {/* Zone 2: 4 concise single-line text navigation links */}
         <nav className="hidden md:flex items-center gap-8 text-sm font-medium text-[#6E665E]">
           {navItems.map((item) => {
             const isActive = activeTab === item.id;
@@ -89,19 +83,17 @@ const Header: React.FC<HeaderProps> = ({
           })}
         </nav>
 
-        {/* Zone 3: 1 primary action */}
         <div className="flex items-center shrink-0">
           <button
             type="button"
             onClick={onStartNewEntry}
             className="min-h-[40px] px-4 py-2 text-xs font-semibold text-[#FDFBF7] bg-[#2D5A3C] hover:bg-[#23472F] rounded-lg transition-colors whitespace-nowrap shrink-0"
           >
-            Write Today’s Entry
+            New Entry
           </button>
         </div>
       </header>
 
-      {/* Mobile 4-Tab Bottom Navigation Bar */}
       <nav
         aria-label="Primary Mobile Navigation"
         className="md:hidden fixed bottom-0 left-0 right-0 z-40 h-16 bg-[#FAF7F2]/95 backdrop-blur-xs border-t border-[#E6DEC8] grid grid-cols-4 items-center px-2"

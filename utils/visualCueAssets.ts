@@ -1,75 +1,94 @@
 export interface VisualCueMatch {
   imageUrl: string;
   caption: string;
-  themeColor: string;
 }
 
-const VISUAL_CUE_GALLERY = {
+const VISUAL_CUE_GALLERY: Record<string, VisualCueMatch> = {
   mosque: {
     imageUrl: '/src/assets/images/cue_mosque_dawn_1794023569357.jpg',
-    caption: 'Courtyard Mosque at Dawn (الْمَسْجِدُ فَجْرًا)',
-    themeColor: '#C87D28',
+    caption: 'Mosque',
   },
   coffee: {
     imageUrl:
       '/src/assets/images/cue_morning_coffee_notebook_1794023570212.jpg',
-    caption: 'Morning Notebook & Arabic Coffee (الْقَهْوَةُ وَالدَّفْتَرُ)',
-    themeColor: '#8C5A2B',
+    caption: 'Coffee & Notebook',
   },
   library: {
     imageUrl:
       '/src/assets/images/cue_library_books_calligraphy_1794023571607.jpg',
-    caption: 'Classical Study & Manuscripts (الْقِرَاءَةُ وَالْعِلْمُ)',
-    themeColor: '#2D5A3C',
+    caption: 'Books & Reading',
   },
   garden: {
     imageUrl: '/src/assets/images/cue_garden_olive_trees_1794023571429.jpg',
-    caption: 'Tranquil Olive Courtyard (السَّكِينَةُ وَالْهُدُوءُ)',
-    themeColor: '#3B6E4C',
+    caption: 'Trees & Courtyard',
   },
 };
 
+/**
+ * Resolves a concrete visual keyword to a curated notebook illustration.
+ * Returns null if `visualKeyword` is null, empty, abstract, or does not match a concrete visual cue,
+ * allowing the Flashcard UI to gracefully adapt to a clean text-and-audio-only layout.
+ */
 export function resolveVisualCueForKeyword(
-  visualKeyword: string,
-  englishMeaning: string
-): VisualCueMatch {
-  const combined = `${visualKeyword} ${englishMeaning}`.toLowerCase();
+  visualKeyword: string | null | undefined
+): VisualCueMatch | null {
+  if (!visualKeyword) return null;
+  const kw = visualKeyword.toLowerCase().trim();
+  if (!kw || kw === 'null' || kw === 'none') return null;
 
   if (
-    combined.includes('mosque') ||
-    combined.includes('dawn') ||
-    combined.includes('fajr') ||
-    combined.includes('went') ||
-    combined.includes('pray') ||
-    combined.includes('arch')
+    kw.includes('mosque') ||
+    kw.includes('masjid') ||
+    kw.includes('minaret') ||
+    kw.includes('arch') ||
+    kw.includes('prayer')
   ) {
     return VISUAL_CUE_GALLERY.mosque;
   }
 
   if (
-    combined.includes('coffee') ||
-    combined.includes('morning') ||
-    combined.includes('drank') ||
-    combined.includes('drink') ||
-    combined.includes('notebook') ||
-    combined.includes('journal') ||
-    combined.includes('early')
+    kw.includes('coffee') ||
+    kw.includes('tea') ||
+    kw.includes('cup') ||
+    kw.includes('drink') ||
+    kw.includes('drank') ||
+    kw.includes('notebook') ||
+    kw.includes('pen') ||
+    kw.includes('write') ||
+    kw.includes('wrote') ||
+    kw.includes('desk') ||
+    kw.includes('table')
   ) {
     return VISUAL_CUE_GALLERY.coffee;
   }
 
   if (
-    combined.includes('garden') ||
-    combined.includes('peace') ||
-    combined.includes('tranquil') ||
-    combined.includes('quiet') ||
-    combined.includes('olive') ||
-    combined.includes('tree') ||
-    combined.includes('courtyard') ||
-    combined.includes('in')
+    kw.includes('book') ||
+    kw.includes('quran') ||
+    kw.includes('library') ||
+    kw.includes('read') ||
+    kw.includes('page') ||
+    kw.includes('study') ||
+    kw.includes('school') ||
+    kw.includes('letter')
+  ) {
+    return VISUAL_CUE_GALLERY.library;
+  }
+
+  if (
+    kw.includes('tree') ||
+    kw.includes('garden') ||
+    kw.includes('olive') ||
+    kw.includes('water') ||
+    kw.includes('fountain') ||
+    kw.includes('courtyard') ||
+    kw.includes('nature') ||
+    kw.includes('leaf') ||
+    kw.includes('flower') ||
+    kw.includes('sun')
   ) {
     return VISUAL_CUE_GALLERY.garden;
   }
 
-  return VISUAL_CUE_GALLERY.library;
+  return null;
 }

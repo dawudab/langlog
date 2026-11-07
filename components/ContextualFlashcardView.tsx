@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
   Volume2,
-  VolumeX,
   Check,
   RotateCcw,
   Eye,
+  Headphones,
   BookOpen,
+  ArrowRight,
+  XCircle,
 } from 'lucide-react';
 import { WordBankItem, isWordMastered, normalizeArabicToken } from '../types';
 import { useSpeechSynthesis } from '../hooks/useSpeechSynthesis';
@@ -13,16 +15,35 @@ import { resolveVisualCueForKeyword } from '../utils/visualCueAssets';
 
 interface ContextualFlashcardViewProps {
   wordBank: WordBankItem[];
+  clozeMode: boolean;
+  autoPlayAudio: boolean;
   onCompleteReview: (wordId: string, outcome: 'again' | 'got_it') => void;
   onNavigateToJournal: () => void;
 }
 
+type StudyExerciseMode = 'flashcard' | 'listenSelect';
+
+const FALLBACK_FUSHA_DISTRACTORS: Array<{
+  arabicWord: string;
+  englishMeaning: string;
+}> = [
+  { arabicWord: 'الْمَسْجِدِ', englishMeaning: 'the mosque' },
+  { arabicWord: 'الْقَهْوَةَ', englishMeaning: 'the coffee' },
+  { arabicWord: 'الدَّفْتَرِ', englishMeaning: 'the notebook' },
+  { arabicWord: 'الصَّبَاحِ', englishMeaning: 'the morning' },
+  { arabicWord: 'الْكِتَابَ', englishMeaning: 'the book' },
+  { arabicWord: 'الْحَدِيقَةِ', englishMeaning: 'the garden' },
+  { arabicWord: 'سَكِينَةٍ', englishMeaning: 'tranquility' },
+  { arabicWord: 'فَجْرًا', englishMeaning: 'at dawn' },
+];
+
 const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
   wordBank,
+  clozeMode,
+  autoPlayAudio,
   onCompleteReview,
   onNavigateToJournal,
 }) => {
-  // Prioritize words that haven't reached 20 reviews yet, sorted by closest to 20/20 mastery
   const studyDeck = useMemo(() => {
     const unmastered = wordBank.filter((w) => !isWordMastered(w));
     const source = unmastered.length > 0 ? unmastered : wordBank;
@@ -33,84 +54,147 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
     });
   }, [wordBank]);
 
+  const [exerciseMode, setExerciseMode] =
+    useState<StudyExerciseMode>('flashcard');
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [confirmedComprehension, setConfirmedComprehension] =
     useState<boolean>(false);
-  const [clozeMode, setClozeMode] = useState<boolean>(false);
-  const [autoPlayAudio, setAutoPlayAudio] = useState<boolean>(true);
   const [showRoot, setShowRoot] = useState<boolean>(false);
   const [imageError, setImageError] = useState<boolean>(false);
   const [sessionCount, setSessionCount] = useState<number>(0);
   const [dragOffsetX, setDragOffsetX] = useState<number>(0);
   const [dragStartX, setDragStartX] = useState<number | null>(null);
 
-  const { speak } = useSpeechSynthesis();
+  // State for "Listen and Select" Exercise
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+
+  const { speak, isSpeaking } = useSpeechSynthesis();
 
   const currentCard =
     studyDeck.length > 0 ? studyDeck[currentIndex % studyDeck.length] : null;
+
+  // Build 4 multiple-choice Arabic options for "Listen and Select"
+  const listenOptions = useMemo(() => {
+    if (!currentCard) return [];
+    const targetNorm = normalizeArabicToken(currentCard.arabicWord);
+
+    const pool: string[] = [];
+    const seenNorm = new Set<string>([targetNorm]);
+
+    for (const item of wordBank) {
+      const norm = normalizeArabicToken(item.arabicWord);
+      if (norm && !seenNorm.has(norm)) {
+        seenNorm.add(norm);
+        pool.push(item.arabicWord);
+      }
+    }
+
+    for (const fallback of FALLBACK_FUSHA_DISTRACTORS) {
+      if (pool.length >= 3) break;
+      const norm = normalizeArabicToken(fallback.arabicWord);
+      if (norm && !seenNorm.has(norm)) {
+        seenNorm.add(norm);
+        pool.push(fallback.arabicWord);
+      }
+    }
+
+    const distractors = pool.slice(0, 3);
+    const combined = [currentCard.arabicWord, ...distractors];
+
+    // Deterministic shuffle seeded by currentCard.id + currentIndex
+    const seedStr = `${currentCard.id}-${currentIndex}`;
+    let seed = 0;
+    for (let i = 0; i < seedStr.length; i++) {
+      seed = (seed * 31 + seedStr.charCodeAt(i)) | 0;
+    }
+
+    return [...combined].sort((a, b) => {
+      const hashA = ((a.charCodeAt(0) || 1) * 17 + seed) % 97;
+      const hashB = ((b.charCodeAt(0) || 1) * 17 + seed) % 97;
+      return hashA - hashB;
+    });
+  }, [currentCard, wordBank, currentIndex]);
 
   useEffect(() => {
     setImageError(false);
     setConfirmedComprehension(false);
     setShowRoot(false);
-    if (currentCard && autoPlayAudio) {
+    setSelectedOption(null);
+
+    if (!currentCard) return;
+
+    if (exerciseMode === 'listenSelect') {
+      // Always play the target word audio in "Listen and Select" mode
+      const timer = window.setTimeout(() => {
+        speak(currentCard.arabicWord, 'ar-SA');
+      }, 150);
+      return () => window.clearTimeout(timer);
+    }
+
+    if (autoPlayAudio) {
       const timer = window.setTimeout(() => {
         speak(
           `${currentCard.arabicWord}. ${currentCard.contextSentenceArabic}`,
           'ar-SA'
         );
-      }, 180);
+      }, 150);
       return () => window.clearTimeout(timer);
     }
-  }, [currentCard?.id, currentIndex, autoPlayAudio]);
+  }, [currentCard?.id, currentIndex, exerciseMode, autoPlayAudio]);
 
   if (!currentCard) {
     return (
       <div className="max-w-3xl mx-auto px-4 sm:px-8 pt-12 pb-28 text-center">
         <div className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] p-10 space-y-4">
           <h1 className="font-serif-notebook text-2xl font-bold text-[#2C2A29]">
-            No Vocabulary in Your Study Deck Yet
+            No Study Cards Yet
           </h1>
           <p className="text-sm text-[#6E665E]">
-            Write a journal entry to generate vocalized Fusha context cards.
+            Write a journal entry to generate contextual Fusha flashcards.
           </p>
           <button
             type="button"
             onClick={onNavigateToJournal}
             className="min-h-[44px] px-5 py-2.5 text-xs font-semibold text-[#FDFBF7] bg-[#2D5A3C] rounded-xl"
           >
-            Write in Journal
+            Write Entry
           </button>
         </div>
       </div>
     );
   }
 
-  const visualCue = resolveVisualCueForKeyword(
-    currentCard.visualKeyword,
-    currentCard.englishMeaning
-  );
+  const visualCue = resolveVisualCueForKeyword(currentCard.visualKeyword);
+  const showVisualBanner = Boolean(visualCue && !imageError);
 
   const handleAction = (outcome: 'again' | 'got_it') => {
     onCompleteReview(currentCard.id, outcome);
     setSessionCount((prev) => prev + 1);
     setConfirmedComprehension(false);
     setShowRoot(false);
+    setSelectedOption(null);
     setDragOffsetX(0);
     setCurrentIndex((prev) => (prev + 1) % Math.max(1, studyDeck.length));
   };
 
+  const handleSelectListenOption = (optionWord: string) => {
+    if (selectedOption !== null) return;
+    setSelectedOption(optionWord);
+    speak(optionWord, 'ar-SA');
+  };
+
   const handlePointerDown = (e: React.PointerEvent) => {
+    if (exerciseMode !== 'flashcard') return;
     setDragStartX(e.clientX);
   };
 
   const handlePointerMove = (e: React.PointerEvent) => {
-    if (dragStartX === null) return;
+    if (dragStartX === null || exerciseMode !== 'flashcard') return;
     setDragOffsetX(e.clientX - dragStartX);
   };
 
   const handlePointerUp = () => {
-    if (dragStartX === null) return;
+    if (dragStartX === null || exerciseMode !== 'flashcard') return;
     if (dragOffsetX > 95) {
       handleAction('got_it');
     } else if (dragOffsetX < -95) {
@@ -121,7 +205,6 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
     setDragStartX(null);
   };
 
-  // Highlight or cloze-blank the target word inside contextSentenceArabic
   const renderContextualArabicSentence = () => {
     const words = currentCard.contextSentenceArabic.split(/\s+/);
     const targetNorm = normalizeArabicToken(currentCard.normalizedWord);
@@ -148,7 +231,7 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
                 key={`${w}-${idx}`}
                 className="inline-block mx-1.5 px-5 py-0.5 rounded-lg bg-[#EFE9DD] border-b-2 border-[#C87D28] text-[#C87D28] font-mono-tabular text-lg align-middle"
               >
-                [ ؟؟؟ ]
+                [ ... ]
               </span>
             );
           }
@@ -166,217 +249,287 @@ const ContextualFlashcardView: React.FC<ContextualFlashcardViewProps> = ({
     );
   };
 
+  const isListenCorrect = selectedOption === currentCard.arabicWord;
+
   return (
     <div className="max-w-3xl mx-auto px-4 sm:px-8 pt-6 pb-28 md:pb-16">
-      {/* Study Header & Mode Controls */}
+      {/* Header & Exercise Mode Switcher */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-4 mb-6 border-b border-[#E6DEC8]">
         <div>
           <h1 className="font-serif-notebook text-2xl font-bold text-[#2C2A29]">
-            High-Volume Contextual Study
+            Study
           </h1>
           <p className="text-xs text-[#6E665E] font-mono-tabular mt-0.5">
-            Tri-Modal Immersion (Picture + Journal Sentence + Fusha Audio) ·{' '}
-            {sessionCount} reviewed this session
+            {sessionCount} reviewed · Card {(currentIndex % studyDeck.length) + 1}{' '}
+            of {studyDeck.length}
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
-          {/* Cloze Sentence Toggle */}
+        {/* Exercise Type Selector */}
+        <div className="flex items-center gap-1 p-1 bg-[#EFE9DD] rounded-xl">
           <button
             type="button"
-            onClick={() => setClozeMode((prev) => !prev)}
-            className={`min-h-[38px] px-3 py-1.5 text-xs font-semibold rounded-lg transition-colors whitespace-nowrap shrink-0 ${
-              clozeMode
-                ? 'bg-[#2D5A3C] text-[#FDFBF7]'
-                : 'bg-[#EFE9DD] text-[#5C554D] hover:text-[#2C2A29]'
+            onClick={() => setExerciseMode('flashcard')}
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              exerciseMode === 'flashcard'
+                ? 'bg-[#FDFBF7] text-[#2C2A29] shadow-xs'
+                : 'text-[#6E665E] hover:text-[#2C2A29]'
             }`}
           >
-            {clozeMode ? 'Cloze Blank: ON' : 'Cloze Blank: OFF'}
+            <BookOpen className="w-3.5 h-3.5 text-[#2D5A3C]" />
+            <span>Contextual Card</span>
           </button>
 
-          {/* Auto-Audio Toggle */}
           <button
             type="button"
-            onClick={() => setAutoPlayAudio((prev) => !prev)}
-            className="min-h-[38px] px-3 py-1.5 text-xs font-semibold rounded-lg bg-[#EFE9DD] text-[#5C554D] hover:text-[#2C2A29] transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+            onClick={() => setExerciseMode('listenSelect')}
+            className={`min-h-[38px] px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+              exerciseMode === 'listenSelect'
+                ? 'bg-[#FDFBF7] text-[#2C2A29] shadow-xs'
+                : 'text-[#6E665E] hover:text-[#2C2A29]'
+            }`}
           >
-            {autoPlayAudio ? (
-              <>
-                <Volume2 className="w-3.5 h-3.5 text-[#2D5A3C]" />
-                <span>Audio First: ON</span>
-              </>
-            ) : (
-              <>
-                <VolumeX className="w-3.5 h-3.5 text-[#8C8377]" />
-                <span>Audio Muted</span>
-              </>
-            )}
+            <Headphones className="w-3.5 h-3.5 text-[#C87D28]" />
+            <span>Listen &amp; Select</span>
           </button>
         </div>
       </div>
 
-      {/* TRI-MODAL CONTEXTUAL CARD (SINGLE UNIFIED IMMERSION SURFACE - NO FLIP CARD) */}
-      <div
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
-        style={{
-          transform: `translateX(${dragOffsetX * 0.35}px) rotate(${
-            dragOffsetX * 0.02
-          }deg)`,
-        }}
-        className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] shadow-xs overflow-hidden transition-transform duration-150 select-none"
-      >
-        {/* Card Progress Top Bar */}
-        <div className="px-6 py-3.5 bg-[#F6F1E6] border-b border-[#E2D9C5] flex items-center justify-between text-xs font-mono-tabular text-[#6E665E]">
-          <span>
-            Card {(currentIndex % studyDeck.length) + 1} of {studyDeck.length}
-          </span>
-          <div className="flex items-center gap-3">
-            <span>Used: {currentCard.usageCount}/20</span>
-            <span aria-hidden="true">·</span>
-            <span className="font-semibold text-[#C87D28]">
-              Reviewed: {currentCard.reviewCount}/20
+      {exerciseMode === 'listenSelect' ? (
+        /* EXERCISE 2: LISTEN AND SELECT THE WORD YOU HEAR */
+        <div className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] p-6 sm:p-10 shadow-xs space-y-8 text-center">
+          <div className="space-y-2">
+            <span className="text-xs font-semibold uppercase tracking-wider text-[#C87D28]">
+              Auditory Recognition
             </span>
+            <h2 className="font-serif-notebook text-xl sm:text-2xl font-bold text-[#2C2A29]">
+              Listen and select the word you hear
+            </h2>
           </div>
-        </div>
 
-        {/* 1. VISUAL CUE / PICTURE */}
-        <div className="relative h-56 sm:h-64 w-full bg-[#F2ECE0] overflow-hidden border-b border-[#E2D9C5]">
-          {!imageError ? (
-            <img
-              src={visualCue.imageUrl}
-              alt={visualCue.caption}
-              referrerPolicy="no-referrer"
-              onError={() => setImageError(true)}
-              className="w-full h-full object-cover"
-            />
-          ) : (
-            <div className="w-full h-full flex flex-col items-center justify-center p-6 text-center bg-gradient-to-br from-[#F6F1E6] to-[#E8DFCE]">
-              <BookOpen className="w-10 h-10 text-[#2D5A3C] mb-2" />
-              <span className="font-serif-notebook text-sm text-[#5C554D]">
-                {visualCue.caption}
-              </span>
-            </div>
-          )}
-
-          {/* Measured Scrim Overlay with Audio Replay Button */}
-          <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/75 via-black/35 to-transparent p-4 flex items-end justify-between gap-4">
-            <span className="text-xs font-medium text-[#FDFBF7]/90">
-              Visual Cue: {currentCard.visualKeyword}
-            </span>
-
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                speak(
-                  `${currentCard.arabicWord}. ${currentCard.contextSentenceArabic}`,
-                  'ar-SA'
-                );
-              }}
-              className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[#FDFBF7]/95 text-[#2C2A29] hover:bg-white text-xs font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
-            >
-              <Volume2 className="w-4 h-4 text-[#2D5A3C]" />
-              <span>Listen in Fusha</span>
-            </button>
-          </div>
-        </div>
-
-        {/* 2. SENTENCE CONTEXT & TARGET VOCALIZED WORD */}
-        <div className="p-6 sm:p-8 space-y-6 text-center">
-          {/* Target Vocalized Word Callout */}
-          <div>
+          {/* Prominent ElevenLabs Audio Trigger (Target Arabic text hidden until answered) */}
+          <div className="flex flex-col items-center justify-center py-2">
             <button
               type="button"
               onClick={() => speak(currentCard.arabicWord, 'ar-SA')}
-              className="inline-flex items-center gap-2.5 px-5 py-2 rounded-2xl bg-[#F6F1E6] hover:bg-[#EFE9DD] border border-[#E2D9C5] transition-colors"
+              aria-label="Play target Arabic word audio"
+              className={`w-24 h-24 rounded-3xl border-2 transition-all flex flex-col items-center justify-center gap-1.5 shadow-xs active:scale-95 ${
+                isSpeaking
+                  ? 'bg-[#2D5A3C] border-[#2D5A3C] text-[#FDFBF7]'
+                  : 'bg-[#F6F1E6] hover:bg-[#EFE9DD] border-[#D8CFC0] text-[#2D5A3C]'
+              }`}
             >
-              <Volume2 className="w-5 h-5 text-[#2D5A3C]" />
-              <span
-                dir="rtl"
-                className="font-arabic text-4xl sm:text-5xl font-bold text-[#2C2A29]"
-              >
-                {currentCard.arabicWord}
+              <Volume2 className="w-9 h-9" />
+              <span className="text-[11px] font-semibold">
+                {isSpeaking ? 'Playing...' : 'Listen'}
               </span>
             </button>
-            <p className="text-xs text-[#7A7267] mt-2">
-              {currentCard.transliteration} · {currentCard.partOfSpeech}
-            </p>
           </div>
 
-          {/* Journal Sentence Context in Vocalized Fusha */}
-          <div className="py-4 px-4 rounded-xl bg-[#FAF7F2] border border-[#EAE2D1]">
-            {renderContextualArabicSentence()}
-          </div>
+          {/* Multiple-Choice Grid of 3–4 Arabic Words */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5 max-w-xl mx-auto">
+            {listenOptions.map((optionWord, idx) => {
+              const isSelected = selectedOption === optionWord;
+              const isTargetWord = optionWord === currentCard.arabicWord;
+              const hasAnswered = selectedOption !== null;
 
-          {/* 3. COMPREHENSION CONFIRMATION REVEAL */}
-          {!confirmedComprehension ? (
-            <button
-              type="button"
-              onClick={() => setConfirmedComprehension(true)}
-              className="w-full min-h-[48px] py-3 px-6 rounded-xl bg-[#EFE9DD] hover:bg-[#E5DEC9] text-sm font-semibold text-[#2C2A29] transition-colors flex items-center justify-center gap-2"
-            >
-              <Eye className="w-4 h-4 text-[#2D5A3C]" />
-              <span>Tap to Confirm Meaning &amp; Sentence Context</span>
-            </button>
-          ) : (
-            <div className="p-5 rounded-xl bg-[#F4EFE4] border border-[#E2D9C5] space-y-3 text-left">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div>
-                  <span className="text-xs text-[#7A7267] block">
-                    English Meaning:
-                  </span>
-                  <p className="text-lg font-bold text-[#2C2A29]">
-                    {currentCard.englishMeaning}
-                  </p>
-                </div>
+              let buttonStyle =
+                'bg-[#FAF7F2] hover:bg-[#F3EDE0] border-[#E2D9C5] text-[#2C2A29]';
 
-                {/* Subtle [See Root] Pill Button */}
+              if (hasAnswered) {
+                if (isTargetWord) {
+                  buttonStyle =
+                    'bg-[#2D5A3C]/15 border-[#2D5A3C] text-[#2D5A3C] ring-1 ring-[#2D5A3C]';
+                } else if (isSelected && !isTargetWord) {
+                  buttonStyle =
+                    'bg-red-50 border-red-400 text-red-900';
+                } else {
+                  buttonStyle =
+                    'bg-[#FAF7F2]/60 border-[#EAE2D1] text-[#8C8377] opacity-70';
+                }
+              }
+
+              return (
                 <button
+                  key={`${optionWord}-${idx}`}
                   type="button"
-                  onClick={() => setShowRoot((prev) => !prev)}
-                  className="min-h-[34px] px-3 py-1 text-xs font-medium text-[#5C554D] bg-[#FDFBF7] hover:bg-[#EFE9DD] border border-[#E2D9C5] rounded-md transition-colors"
+                  disabled={hasAnswered}
+                  onClick={() => handleSelectListenOption(optionWord)}
+                  dir="rtl"
+                  lang="ar"
+                  className={`min-h-[72px] px-5 py-4 rounded-2xl border-2 transition-all flex items-center justify-between gap-3 cursor-pointer ${buttonStyle}`}
                 >
-                  {showRoot ? `Root: ${currentCard.root}` : 'See Root'}
-                </button>
-              </div>
+                  <span className="font-arabic text-3xl sm:text-4xl font-bold leading-relaxed">
+                    {optionWord}
+                  </span>
 
-              <div className="pt-2 border-t border-[#E2D9C5]/80">
-                <span className="text-xs text-[#7A7267] block">
-                  Journal Sentence Translation:
-                </span>
-                <p className="font-serif-notebook text-sm text-[#4A453E] italic">
-                  “{currentCard.contextSentenceEnglish}”
+                  {hasAnswered && isTargetWord && (
+                    <Check className="w-5 h-5 text-[#2D5A3C] shrink-0" />
+                  )}
+                  {hasAnswered && isSelected && !isTargetWord && (
+                    <XCircle className="w-5 h-5 text-red-600 shrink-0" />
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Feedback & Continue Banner */}
+          {selectedOption !== null && (
+            <div className="max-w-xl mx-auto p-5 rounded-2xl bg-[#F4EFE4] border border-[#E2D9C5] flex flex-col sm:flex-row sm:items-center justify-between gap-4 text-left">
+              <div className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <span
+                    className={`text-xs font-bold uppercase tracking-wider ${
+                      isListenCorrect ? 'text-[#2D5A3C]' : 'text-red-700'
+                    }`}
+                  >
+                    {isListenCorrect ? 'Correct!' : 'Keep Practicing'}
+                  </span>
+                  <span aria-hidden="true" className="text-[#B8AFA0]">
+                    ·
+                  </span>
+                  <span className="text-xs text-[#6E665E]">
+                    Root: {currentCard.root}
+                  </span>
+                </div>
+                <p className="text-base font-bold text-[#2C2A29]">
+                  <span dir="rtl" className="font-arabic text-2xl mr-2">
+                    {currentCard.arabicWord}
+                  </span>{' '}
+                  — {currentCard.englishMeaning}
                 </p>
               </div>
+
+              <button
+                type="button"
+                onClick={() =>
+                  handleAction(isListenCorrect ? 'got_it' : 'again')
+                }
+                className="min-h-[44px] px-5 py-2.5 rounded-xl bg-[#2D5A3C] hover:bg-[#23472F] text-xs font-semibold text-[#FDFBF7] transition-colors flex items-center justify-center gap-2 whitespace-nowrap shrink-0"
+              >
+                <span>Next Word</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        /* EXERCISE 1: CONTEXTUAL FLASHCARD */
+        <div
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          style={{
+            transform: `translateX(${dragOffsetX * 0.35}px) rotate(${
+              dragOffsetX * 0.02
+            }deg)`,
+          }}
+          className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] shadow-xs overflow-hidden transition-transform duration-150 select-none"
+        >
+          {/* Optional Concrete Visual Cue (Only rendered when visualKeyword has a valid concrete illustration) */}
+          {showVisualBanner && visualCue && (
+            <div className="relative h-52 sm:h-60 w-full bg-[#F2ECE0] overflow-hidden border-b border-[#E2D9C5]">
+              <img
+                src={visualCue.imageUrl}
+                alt={visualCue.caption}
+                referrerPolicy="no-referrer"
+                onError={() => setImageError(true)}
+                className="w-full h-full object-cover"
+              />
             </div>
           )}
 
-          {/* HIGH-VOLUME ACTION BUTTONS: AGAIN / GOT IT (+1 REVIEW COUNT) */}
-          <div className="grid grid-cols-2 gap-4 pt-2">
-            <button
-              type="button"
-              onClick={() => handleAction('again')}
-              className="min-h-[48px] px-5 py-3 rounded-xl border border-[#D8CFC0] bg-[#FAF7F2] hover:bg-[#EFE9DD] text-sm font-semibold text-[#5C554D] transition-colors flex items-center justify-center gap-2"
-            >
-              <RotateCcw className="w-4 h-4 text-[#C87D28]" />
-              <span>Again (Keep Practicing)</span>
-            </button>
+          {/* Sentence Context & Audio Surface */}
+          <div className="p-6 sm:p-8 space-y-6 text-center">
+            <div className="flex flex-col items-center">
+              <button
+                type="button"
+                onClick={() =>
+                  speak(
+                    `${currentCard.arabicWord}. ${currentCard.contextSentenceArabic}`,
+                    'ar-SA'
+                  )
+                }
+                className="inline-flex items-center gap-2.5 px-5 py-2.5 rounded-2xl bg-[#F6F1E6] hover:bg-[#EFE9DD] border border-[#E2D9C5] transition-colors"
+              >
+                <Volume2 className="w-5 h-5 text-[#2D5A3C]" />
+                <span
+                  dir="rtl"
+                  className="font-arabic text-4xl sm:text-5xl font-bold text-[#2C2A29]"
+                >
+                  {currentCard.arabicWord}
+                </span>
+              </button>
+              <p className="text-xs text-[#7A7267] mt-2">
+                {currentCard.partOfSpeech}
+              </p>
+            </div>
 
-            <button
-              type="button"
-              onClick={() => handleAction('got_it')}
-              className="min-h-[48px] px-5 py-3 rounded-xl bg-[#2D5A3C] hover:bg-[#23472F] text-sm font-semibold text-[#FDFBF7] transition-colors flex items-center justify-center gap-2"
-            >
-              <Check className="w-4 h-4" />
-              <span>
-                Got It ({Math.min(20, currentCard.reviewCount + 1)}/20)
-              </span>
-            </button>
+            {/* Journal Sentence Context in Vocalized Fusha */}
+            <div className="py-4 px-4 rounded-xl bg-[#FAF7F2] border border-[#EAE2D1]">
+              {renderContextualArabicSentence()}
+            </div>
+
+            {/* Comprehension Reveal */}
+            {!confirmedComprehension ? (
+              <button
+                type="button"
+                onClick={() => setConfirmedComprehension(true)}
+                className="w-full min-h-[48px] py-3 px-6 rounded-xl bg-[#EFE9DD] hover:bg-[#E5DEC9] text-sm font-semibold text-[#2C2A29] transition-colors flex items-center justify-center gap-2"
+              >
+                <Eye className="w-4 h-4 text-[#2D5A3C]" />
+                <span>Show Meaning</span>
+              </button>
+            ) : (
+              <div className="p-5 rounded-xl bg-[#F4EFE4] border border-[#E2D9C5] space-y-3 text-left">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-lg font-bold text-[#2C2A29]">
+                    {currentCard.englishMeaning}
+                  </p>
+
+                  <button
+                    type="button"
+                    onClick={() => setShowRoot((prev) => !prev)}
+                    className="min-h-[32px] px-3 py-1 text-xs font-medium text-[#5C554D] bg-[#FDFBF7] hover:bg-[#EFE9DD] border border-[#E2D9C5] rounded-md transition-colors"
+                  >
+                    {showRoot ? `Root: ${currentCard.root}` : 'See Root'}
+                  </button>
+                </div>
+
+                <div className="pt-2 border-t border-[#E2D9C5]/80">
+                  <p className="font-serif-notebook text-sm text-[#4A453E] italic">
+                    “{currentCard.contextSentenceEnglish}”
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Again / Got It */}
+            <div className="grid grid-cols-2 gap-4 pt-2">
+              <button
+                type="button"
+                onClick={() => handleAction('again')}
+                className="min-h-[48px] px-5 py-3 rounded-xl border border-[#D8CFC0] bg-[#FAF7F2] hover:bg-[#EFE9DD] text-sm font-semibold text-[#5C554D] transition-colors flex items-center justify-center gap-2"
+              >
+                <RotateCcw className="w-4 h-4 text-[#C87D28]" />
+                <span>Again</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleAction('got_it')}
+                className="min-h-[48px] px-5 py-3 rounded-xl bg-[#2D5A3C] hover:bg-[#23472F] text-sm font-semibold text-[#FDFBF7] transition-colors flex items-center justify-center gap-2"
+              >
+                <Check className="w-4 h-4" />
+                <span>
+                  Got It ({Math.min(20, currentCard.reviewCount + 1)}/20)
+                </span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
 };

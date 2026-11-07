@@ -3,10 +3,12 @@ import {
   Volume2,
   Feather,
   BookOpen,
-  Eye,
   Trash2,
   Layers,
+  Loader2,
+  AlertCircle,
   Check,
+  Sparkles,
 } from 'lucide-react';
 import {
   JournalEntry,
@@ -28,23 +30,16 @@ interface NotebookJournalViewProps {
   onDeleteEntry: (entryId: string) => void;
   onNavigateToStudy: () => void;
   onNavigateToWordBank: () => void;
-  onFastForwardMastery?: (normalizedWord: string) => void;
 }
 
-const NOTEBOOK_PROMPTS: Array<{ title: string; text: string }> = [
-  {
-    title: 'Dawn at the Mosque',
-    text: 'I went to the mosque at dawn and recited the Noble Quran in tranquility and quietude.',
-  },
-  {
-    title: 'Morning Coffee & Notebook',
-    text: 'In the early morning I drank Arabic coffee and wrote my thoughts in my daily journal to learn Fusha Arabic.',
-  },
-  {
-    title: 'Evening Study in the Garden',
-    text: 'Before sunset I sat in the quiet garden, read a chapter of classical Arabic literature, and reflected on my day.',
-  },
-];
+interface CategorizedTokenItem {
+  token: WordToken;
+  key: string;
+  usageCount: number;
+  reviewCount: number;
+  mastered: boolean;
+  previouslyLearned: boolean;
+}
 
 const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
   entries,
@@ -57,10 +52,10 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
   onDeleteEntry,
   onNavigateToStudy,
   onNavigateToWordBank,
-  onFastForwardMastery,
 }) => {
   const [draftText, setDraftText] = useState<string>('');
-  const [isTurningPage, setIsTurningPage] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [activeAudioWord, setActiveAudioWord] = useState<string | null>(null);
   const [peekedWords, setPeekedWords] = useState<Record<string, boolean>>({});
   const [expandedRoots, setExpandedRoots] = useState<Record<string, boolean>>(
@@ -74,7 +69,6 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
     [entries, activeEntryId]
   );
 
-  // Map normalizedWord -> live WordBankItem so 20/20 Mastery reflects latest usage & review counts immediately
   const wordBankLookup = useMemo(() => {
     const map = new Map<string, WordBankItem>();
     wordBank.forEach((item) => {
@@ -84,7 +78,7 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
     return map;
   }, [wordBank]);
 
-  const getLiveStatsForToken = (token: WordToken) => {
+  const getTokenLearningState = (token: WordToken) => {
     const norm =
       normalizeArabicToken(token.normalizedWord) ||
       normalizeArabicToken(token.arabicWord);
@@ -94,29 +88,94 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
       ? bankItem.reviewCount
       : token.reviewCount || 0;
     const mastered = isWordMastered({ usageCount, reviewCount });
-    return { usageCount, reviewCount, mastered, norm };
+    const previouslyLearned = mastered || usageCount > 1 || reviewCount > 0;
+    return { usageCount, reviewCount, mastered, previouslyLearned };
   };
+
+  // Deduplicate entry tokens and group them into logical categories + "Previously Learned"
+  const categorizedWords = useMemo(() => {
+    if (!activeEntry) {
+      return {
+        nouns: [] as CategorizedTokenItem[],
+        verbs: [] as CategorizedTokenItem[],
+        adjectivesAndParticles: [] as CategorizedTokenItem[],
+        previouslyLearned: [] as CategorizedTokenItem[],
+        totalUnique: 0,
+      };
+    }
+
+    const seen = new Set<string>();
+    const nouns: CategorizedTokenItem[] = [];
+    const verbs: CategorizedTokenItem[] = [];
+    const adjectivesAndParticles: CategorizedTokenItem[] = [];
+    const previouslyLearned: CategorizedTokenItem[] = [];
+
+    activeEntry.tokens.forEach((token, idx) => {
+      const normKey =
+        normalizeArabicToken(token.normalizedWord) ||
+        normalizeArabicToken(token.arabicWord) ||
+        `${token.arabicWord}-${idx}`;
+
+      if (seen.has(normKey)) return;
+      seen.add(normKey);
+
+      const state = getTokenLearningState(token);
+      const item: CategorizedTokenItem = {
+        token,
+        key: `${normKey}-${idx}`,
+        ...state,
+      };
+
+      if (state.previouslyLearned) {
+        previouslyLearned.push(item);
+        return;
+      }
+
+      const pos = (token.partOfSpeech || '').toLowerCase();
+      if (pos.includes('noun')) {
+        nouns.push(item);
+      } else if (pos.includes('verb')) {
+        verbs.push(item);
+      } else {
+        adjectivesAndParticles.push(item);
+      }
+    });
+
+    return {
+      nouns,
+      verbs,
+      adjectivesAndParticles,
+      previouslyLearned,
+      totalUnique: seen.size,
+    };
+  }, [activeEntry, wordBankLookup]);
+
+  const wordCount =
+    draftText.trim().length === 0 ? 0 : draftText.trim().split(/\s+/).length;
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!draftText.trim() || isTurningPage) return;
+    if (!draftText.trim() || isLoading) return;
 
-    setIsTurningPage(true);
+    if (wordCount > 250) {
+      setSubmitError('Please keep your entry within 250 words.');
+      return;
+    }
+
+    setIsLoading(true);
+    setSubmitError(null);
     try {
-      // Smooth calming "Ink & Page Turn" transition while Gemini processes
-      const minAnimationDelay = new Promise((resolve) =>
-        window.setTimeout(resolve, 1100)
-      );
-      const [created] = await Promise.all([
-        onSubmitJournalEntry(draftText.trim()),
-        minAnimationDelay,
-      ]);
+      const created = await onSubmitJournalEntry(draftText.trim());
       if (created) {
         setDraftText('');
         onSelectEntry(created.id);
       }
+    } catch (error: any) {
+      setSubmitError(
+        error?.message || 'Could not translate entry. Please try again.'
+      );
     } finally {
-      setIsTurningPage(false);
+      setIsLoading(false);
     }
   };
 
@@ -125,10 +184,11 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
     speak(arabicWord, 'ar-SA');
     window.setTimeout(() => {
       setActiveAudioWord((prev) => (prev === arabicWord ? null : prev));
-    }, 1200);
+    }, 1100);
   };
 
-  const toggleRootReveal = (key: string) => {
+  const toggleRootReveal = (key: string, e: React.MouseEvent) => {
+    e.stopPropagation();
     setExpandedRoots((prev) => ({
       ...prev,
       [key]: !prev[key],
@@ -144,43 +204,105 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
 
   const formattedToday = new Intl.DateTimeFormat('en-US', {
     weekday: 'long',
-    month: 'long',
+    month: 'short',
     day: 'numeric',
-    year: 'numeric',
   }).format(new Date());
 
-  const wordCount =
-    draftText.trim().length === 0 ? 0 : draftText.trim().split(/\s+/).length;
+  const renderWordChip = (item: CategorizedTokenItem, isLearnedGroup = false) => {
+    const { token, key, mastered } = item;
+    const isPlayingThis = activeAudioWord === token.arabicWord;
+    const isRootOpen = Boolean(expandedRoots[key]);
+
+    return (
+      <div
+        key={key}
+        onClick={() => handleSpeakWord(token.arabicWord)}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            handleSpeakWord(token.arabicWord);
+          }
+        }}
+        className={`group inline-flex items-center gap-3 px-4 py-2.5 rounded-2xl border transition-all cursor-pointer select-none ${
+          isPlayingThis
+            ? 'bg-[#2D5A3C]/12 border-[#2D5A3C] shadow-xs'
+            : isLearnedGroup
+            ? 'bg-[#F4EFE4]/85 border-[#DDD4C0] hover:border-[#2D5A3C]/60 hover:bg-[#EFE8D8]'
+            : 'bg-[#FAF7F2] border-[#E5DEC9] hover:border-[#C87D28] hover:bg-[#F5EFE2]'
+        }`}
+      >
+        <span
+          className={`w-7 h-7 rounded-lg flex items-center justify-center transition-colors shrink-0 ${
+            isPlayingThis
+              ? 'bg-[#2D5A3C] text-[#FDFBF7]'
+              : 'bg-[#EDE6D6] text-[#2D5A3C] group-hover:bg-[#2D5A3C] group-hover:text-[#FDFBF7]'
+          }`}
+        >
+          <Volume2 className="w-3.5 h-3.5" />
+        </span>
+
+        <div className="flex items-baseline gap-2.5">
+          <span
+            dir="rtl"
+            className="font-arabic text-2xl font-bold text-[#2C2A29] leading-none"
+          >
+            {token.arabicWord}
+          </span>
+          <span className="text-xs font-semibold text-[#5C554D]">
+            {token.englishMeaning}
+          </span>
+        </div>
+
+        {mastered && (
+          <span
+            title="Mastered (20/20)"
+            className="inline-flex items-center justify-center w-5 h-5 rounded-md bg-[#2D5A3C]/15 text-[#2D5A3C]"
+          >
+            <Check className="w-3 h-3" />
+          </span>
+        )}
+
+        {token.root && token.root !== '—' && (
+          <button
+            type="button"
+            onClick={(e) => toggleRootReveal(key, e)}
+            className="min-h-[26px] px-2 py-0.5 text-[11px] font-medium text-[#6E665E] bg-[#EFE9DD] hover:bg-[#E2D9C5] rounded-md transition-colors whitespace-nowrap shrink-0"
+          >
+            {isRootOpen ? token.root : 'Root'}
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="max-w-5xl mx-auto px-4 sm:px-8 pt-6 pb-28 md:pb-16">
-      {/* Top Notebook Mode Bar */}
+      {/* Header Bar */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-6 border-b border-[#E6DEC8]">
         <div>
-          <p className="text-xs text-[#7A7267] font-medium">{formattedToday}</p>
-          <h1 className="font-serif-notebook text-2xl sm:text-3xl font-bold text-[#2C2A29] mt-0.5">
-            {isWritingMode || !activeEntry
-              ? 'Daily Arabic Acquisition Journal'
-              : 'Translated Fusha Notebook Page'}
+          <p className="text-xs text-[#7A7267]">{formattedToday}</p>
+          <h1 className="font-serif-notebook text-2xl font-bold text-[#2C2A29] mt-0.5">
+            {isWritingMode || !activeEntry ? 'Notebook' : 'Translated Entry'}
           </h1>
         </div>
 
-        {/* Mode Switcher between Writing Page and Translated Entry View */}
-        <div className="flex items-center gap-1 p-1 bg-[#EFE9DD] rounded-xl">
-          <button
-            type="button"
-            onClick={onStartWriting}
-            className={`min-h-[38px] px-4 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
-              isWritingMode
-                ? 'bg-[#FDFBF7] text-[#2C2A29] shadow-xs'
-                : 'text-[#6E665E] hover:text-[#2C2A29]'
-            }`}
-          >
-            <Feather className="w-3.5 h-3.5 text-[#2D5A3C]" />
-            <span>Write Entry</span>
-          </button>
+        {activeEntry && (
+          <div className="flex items-center gap-1 p-1 bg-[#EFE9DD] rounded-xl">
+            <button
+              type="button"
+              onClick={onStartWriting}
+              className={`min-h-[38px] px-4 py-1.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0 ${
+                isWritingMode
+                  ? 'bg-[#FDFBF7] text-[#2C2A29] shadow-xs'
+                  : 'text-[#6E665E] hover:text-[#2C2A29]'
+              }`}
+            >
+              <Feather className="w-3.5 h-3.5 text-[#2D5A3C]" />
+              <span>Write</span>
+            </button>
 
-          {activeEntry && (
             <button
               type="button"
               onClick={() => onSelectEntry(activeEntry.id)}
@@ -191,67 +313,28 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
               }`}
             >
               <BookOpen className="w-3.5 h-3.5 text-[#C87D28]" />
-              <span>Translated Page</span>
+              <span>Reading View</span>
             </button>
-          )}
-        </div>
+          </div>
+        )}
       </div>
 
-      {/* Calming Ink & Page Turn Transition State */}
-      {isTurningPage ? (
-        <div className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] p-12 sm:p-16 text-center shadow-xs animate-page-turn my-6">
-          <div className="w-14 h-14 mx-auto mb-5 rounded-full bg-[#2D5A3C]/10 text-[#2D5A3C] flex items-center justify-center">
-            <Feather className="w-6 h-6 animate-bounce" />
-          </div>
-          <h2 className="font-serif-notebook text-2xl font-bold text-[#2C2A29]">
-            Turning the Page &amp; Vocalizing into Fusha...
-          </h2>
-          <p className="text-sm text-[#6E665E] max-w-md mx-auto mt-2 leading-relaxed">
-            Inscribing your thoughts in fully vocalized Modern Standard Arabic
-            (الْعَرَبِيَّةُ الْفُصْحَى) with Harakat and updating your 20/20
-            Word Bank.
-          </p>
-          <p
-            dir="rtl"
-            className="font-arabic text-3xl text-[#2D5A3C] mt-6 tracking-wide"
-          >
-            بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ
-          </p>
-        </div>
-      ) : isWritingMode || !activeEntry ? (
-        /* 1. THE WRITING CANVAS ("THE SIMPLE NOTEBOOK") */
+      {isWritingMode || !activeEntry ? (
+        /* 1. CLEAN WRITING CANVAS */
         <div className="space-y-8">
           <form
             onSubmit={handleSubmit}
             className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] shadow-xs overflow-hidden"
           >
-            {/* Notebook Header Strip */}
-            <div className="px-6 sm:px-10 py-4 bg-[#F6F1E6] border-b border-[#E2D9C5] flex flex-wrap items-center justify-between gap-3">
-              <div className="text-xs text-[#6E665E]">
-                <span>
-                  Write in English (or mix in Arabic words you know)
-                </span>
-                <span aria-hidden="true"> · </span>
-                <span>Translated strictly into vocalized Fusha Arabic</span>
+            {submitError && (
+              <div className="px-6 py-3 bg-red-50 border-b border-red-200 text-xs text-red-800 flex items-center gap-2">
+                <AlertCircle className="w-4 h-4 shrink-0" />
+                <span>{submitError}</span>
               </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                {NOTEBOOK_PROMPTS.map((prompt) => (
-                  <button
-                    key={prompt.title}
-                    type="button"
-                    onClick={() => setDraftText(prompt.text)}
-                    className="px-2.5 py-1 text-xs font-medium text-[#2D5A3C] bg-[#2D5A3C]/10 hover:bg-[#2D5A3C]/15 rounded-md transition-colors whitespace-nowrap shrink-0"
-                  >
-                    {prompt.title}
-                  </button>
-                ))}
-              </div>
-            </div>
+            )}
 
             {/* Ruled Notebook Paper Area */}
-            <div className="relative px-6 sm:px-12 py-6 notebook-ruled min-h-[360px]">
-              {/* Subtle vertical notebook margin line */}
+            <div className="relative px-6 sm:px-12 py-6 notebook-ruled min-h-[340px]">
               <div
                 aria-hidden="true"
                 className="hidden sm:block absolute top-0 bottom-0 left-8 w-px bg-[#D9B8A6]/50"
@@ -259,49 +342,59 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
               <textarea
                 value={draftText}
                 onChange={(e) => setDraftText(e.target.value)}
+                disabled={isLoading}
                 rows={8}
-                placeholder="Write honestly about your day, your studies, or a quiet moment... When you turn the page, every word will be vocalized in Fusha Arabic and tracked toward your 20/20 mastery."
-                className="w-full sm:pl-4 resize-none border-0 bg-transparent focus:outline-none focus:ring-0 font-serif-notebook text-lg sm:text-xl text-[#2C2A29] placeholder:text-[#A39B8E] leading-[40px]"
+                placeholder="Write your journal entry..."
+                className="w-full sm:pl-4 resize-none border-0 bg-transparent focus:outline-none focus:ring-0 font-serif-notebook text-lg sm:text-xl text-[#2C2A29] placeholder:text-[#A39B8E] leading-[40px] disabled:opacity-60"
               />
             </div>
 
-            {/* Notebook Footer Action Bar */}
+            {/* Footer Action Bar */}
             <div className="px-6 sm:px-10 py-4 bg-[#F6F1E6] border-t border-[#E2D9C5] flex flex-wrap items-center justify-between gap-4">
-              <div className="text-xs text-[#6E665E] font-mono-tabular">
-                <span>
-                  {wordCount} {wordCount === 1 ? 'word' : 'words'}
-                </span>
-                <span aria-hidden="true"> · </span>
-                <span>20 uses + 20 reviews = Direct Arabic Immersion</span>
+              <div
+                className={`text-xs font-mono-tabular ${
+                  wordCount > 250 ? 'text-red-700 font-semibold' : 'text-[#6E665E]'
+                }`}
+              >
+                <span>{wordCount} / 250 words</span>
               </div>
 
               <div className="flex items-center gap-3">
-                {draftText.trim().length > 0 && (
+                {draftText.trim().length > 0 && !isLoading && (
                   <button
                     type="button"
                     onClick={() => setDraftText('')}
                     className="min-h-[42px] px-3.5 py-2 text-xs font-medium text-[#6E665E] hover:text-[#2C2A29] transition-colors"
                   >
-                    Clear Page
+                    Clear
                   </button>
                 )}
                 <button
                   type="submit"
-                  disabled={!draftText.trim()}
-                  className="min-h-[44px] px-6 py-2.5 text-sm font-semibold text-[#FDFBF7] bg-[#2D5A3C] hover:bg-[#23472F] rounded-xl transition-all active:scale-[0.99] disabled:opacity-45 flex items-center gap-2 whitespace-nowrap shrink-0"
+                  disabled={!draftText.trim() || isLoading || wordCount > 250}
+                  className="min-h-[44px] px-6 py-2.5 text-sm font-semibold text-[#FDFBF7] bg-[#2D5A3C] hover:bg-[#23472F] rounded-xl transition-all active:scale-[0.99] disabled:opacity-50 flex items-center gap-2 whitespace-nowrap shrink-0"
                 >
-                  <Feather className="w-4 h-4" />
-                  <span>Turn Page &amp; Translate to Fusha</span>
+                  {isLoading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      <span>Translating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Feather className="w-4 h-4" />
+                      <span>Translate</span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
           </form>
 
-          {/* Recent Notebook Pages Index */}
+          {/* Past Entries List */}
           {entries.length > 0 && (
             <section className="space-y-3">
               <h2 className="font-serif-notebook text-lg font-bold text-[#2C2A29]">
-                Previous Notebook Pages ({entries.length})
+                Entries ({entries.length})
               </h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {entries.map((entry) => {
@@ -309,9 +402,6 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
                     month: 'short',
                     day: 'numeric',
                   }).format(new Date(entry.createdAt));
-                  const masteredInEntry = entry.tokens.filter(
-                    (t) => getLiveStatsForToken(t).mastered
-                  ).length;
 
                   return (
                     <div
@@ -329,8 +419,7 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
                       <div>
                         <div className="flex items-center justify-between text-xs text-[#7A7267] mb-2 font-mono-tabular">
                           <span>
-                            {dateLabel} · {entry.tokens.length} Fusha words ·{' '}
-                            {masteredInEntry} mastered (20/20)
+                            {dateLabel} · {entry.tokens.length} words
                           </span>
                           <button
                             type="button"
@@ -338,7 +427,7 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
                               e.stopPropagation();
                               onDeleteEntry(entry.id);
                             }}
-                            aria-label="Delete notebook entry"
+                            aria-label="Delete entry"
                             className="p-1 text-[#9E9587] hover:text-red-700 transition-colors"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -362,59 +451,44 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
           )}
         </div>
       ) : (
-        /* 2. THE TRANSLATED ENTRY PAGE & THE "20/20 MASTERY RULE" */
+        /* 2. TRANSLATED ENTRY PAGE & NATURAL INTERLINEAR READER (NO BOXES, NO STATS) */
         <div className="space-y-8">
-          {/* Interlinear Tokenized Notebook Sheet */}
           <section className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] p-6 sm:p-10 shadow-xs space-y-6">
-            {/* Sheet Top Bar */}
             <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#EAE2D1]">
-              <div className="text-xs text-[#6E665E]">
-                <span className="font-semibold text-[#2C2A29]">
-                  Interlinear Fusha Reader
-                </span>
-                <span aria-hidden="true"> · </span>
-                <span>Tap any Arabic word to hear pronunciation</span>
-                <span aria-hidden="true"> · </span>
-                <span className="text-[#2D5A3C] font-medium">
-                  Mastered (20/20) words hide English (hold word to peek)
-                </span>
-              </div>
+              <span className="text-xs text-[#6E665E]">
+                Tap any word for audio · Hold mastered words to peek
+              </span>
 
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (isSpeaking) {
-                      stop();
-                    } else {
-                      speak(activeEntry.fullArabicTranslation, 'ar-SA');
-                    }
-                  }}
-                  className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[#2D5A3C]/10 hover:bg-[#2D5A3C]/20 text-xs font-semibold text-[#2D5A3C] transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
-                >
-                  <Volume2 className="w-4 h-4" />
-                  <span>
-                    {isSpeaking ? 'Stop Audio' : 'Listen to Full Passage'}
-                  </span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  if (isSpeaking) {
+                    stop();
+                  } else {
+                    speak(activeEntry.fullArabicTranslation, 'ar-SA');
+                  }
+                }}
+                className="min-h-[38px] px-3.5 py-1.5 rounded-lg bg-[#2D5A3C]/10 hover:bg-[#2D5A3C]/20 text-xs font-semibold text-[#2D5A3C] transition-colors flex items-center gap-1.5 whitespace-nowrap shrink-0"
+              >
+                <Volume2 className="w-4 h-4" />
+                <span>{isSpeaking ? 'Stop' : 'Listen All'}</span>
+              </button>
             </div>
 
-            {/* INTERLINEAR TOKENIZED DISPLAY (RTL FLOW) */}
+            {/* Natural Flowing Interlinear Paragraph (No Bounding Boxes, No Stats) */}
             <div
               dir="rtl"
               lang="ar"
-              className="flex flex-wrap items-stretch gap-x-3 gap-y-5 py-4"
+              className="flex flex-wrap items-baseline gap-x-5 gap-y-6 py-4 leading-relaxed"
             >
               {activeEntry.tokens.map((token, idx) => {
-                const { usageCount, reviewCount, mastered } =
-                  getLiveStatsForToken(token);
+                const { mastered } = getTokenLearningState(token);
                 const tokenKey = `${token.arabicWord}-${idx}`;
                 const isPeeking = Boolean(peekedWords[tokenKey]);
                 const isPlayingThis = activeAudioWord === token.arabicWord;
 
                 return (
-                  <div
+                  <span
                     key={tokenKey}
                     onClick={() => handleSpeakWord(token.arabicWord)}
                     onPointerDown={() => {
@@ -435,188 +509,146 @@ const NotebookJournalView: React.FC<NotebookJournalViewProps> = ({
                         handleSpeakWord(token.arabicWord);
                       }
                     }}
-                    className={`group select-none cursor-pointer rounded-xl px-3.5 py-2.5 border transition-all flex flex-col items-center justify-between min-w-[82px] ${
-                      isPlayingThis
-                        ? 'bg-[#2D5A3C]/15 border-[#2D5A3C] scale-[1.02]'
-                        : mastered
-                        ? 'bg-[#F4EFE4]/70 border-[#D5CEBE] hover:border-[#2D5A3C]'
-                        : 'bg-[#FAF7F2] border-[#E6DEC8] hover:border-[#C87D28]'
-                    }`}
+                    className="inline-flex flex-col items-center select-none cursor-pointer group"
                   >
-                    {/* Vocalized Fusha Arabic Token */}
-                    <span className="font-arabic text-3xl sm:text-4xl text-[#2C2A29] leading-[1.6] tracking-normal">
+                    <span
+                      className={`font-arabic text-3xl sm:text-4xl leading-[1.6] transition-colors ${
+                        isPlayingThis
+                          ? 'text-[#2D5A3C]'
+                          : 'text-[#2C2A29] group-hover:text-[#2D5A3C]'
+                      }`}
+                    >
                       {token.arabicWord}
                     </span>
 
-                    {/* Interlinear English Sub-Gloss OR 20/20 Mastered Immersion State */}
-                    <div
-                      dir="ltr"
-                      className="mt-1.5 pt-1.5 border-t border-[#E6DEC8]/80 w-full text-center"
-                    >
-                      {mastered && !isPeeking ? (
-                        <div className="flex items-center justify-center gap-1 text-[11px] font-medium text-[#2D5A3C]">
-                          <Check className="w-3 h-3" />
-                          <span>20/20 · Hold to peek</span>
-                        </div>
-                      ) : (
-                        <span className="block text-xs font-medium text-[#5C554D]">
-                          {token.englishMeaning}
-                        </span>
-                      )}
-                      <span className="block text-[10px] font-mono-tabular text-[#8C8377] mt-0.5">
-                        {usageCount}/20u · {reviewCount}/20r
+                    {(!mastered || isPeeking) && (
+                      <span
+                        dir="ltr"
+                        className="mt-0.5 text-xs font-medium text-[#6E665E] text-center"
+                      >
+                        {token.englishMeaning}
                       </span>
-                    </div>
-                  </div>
+                    )}
+                  </span>
                 );
               })}
             </div>
 
-            {/* Original English Notebook Reflection */}
             <div className="pt-4 border-t border-[#EAE2D1] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
-                <span className="text-[11px] text-[#8C8377] block mb-0.5">
-                  Your Original English Reflection:
-                </span>
-                <p className="font-serif-notebook text-base text-[#4A453E] italic">
-                  “{activeEntry.originalText}”
-                </p>
-              </div>
+              <p className="font-serif-notebook text-base text-[#4A453E] italic">
+                “{activeEntry.originalText}”
+              </p>
 
-              <div className="flex items-center gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={onNavigateToStudy}
-                  className="min-h-[40px] px-4 py-2 text-xs font-semibold text-[#FDFBF7] bg-[#C87D28] hover:bg-[#B26D1F] rounded-xl transition-colors flex items-center gap-1.5 whitespace-nowrap"
-                >
-                  <Layers className="w-3.5 h-3.5" />
-                  <span>Practice in Contextual Study</span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={onNavigateToStudy}
+                className="min-h-[40px] px-4 py-2 text-xs font-semibold text-[#FDFBF7] bg-[#C87D28] hover:bg-[#B26D1F] rounded-xl transition-colors flex items-center gap-1.5 self-start sm:self-auto whitespace-nowrap shrink-0"
+              >
+                <Layers className="w-3.5 h-3.5" />
+                <span>Study Words</span>
+              </button>
             </div>
           </section>
 
-          {/* BOTTOM WORD LIST (Extracted Words + Subtle [See Root] Option) */}
-          <section className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] p-6 sm:p-8 shadow-xs">
-            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 mb-4 border-b border-[#EAE2D1]">
+          {/* 3. CATEGORIZED WORD CHIPS & "PREVIOUSLY LEARNED" SECTION */}
+          <section className="bg-[#FDFBF7] rounded-2xl border border-[#E2D9C5] p-6 sm:p-8 shadow-xs space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4 pb-4 border-b border-[#EAE2D1]">
               <div>
                 <h2 className="font-serif-notebook text-xl font-bold text-[#2C2A29]">
-                  Words from This Entry ({activeEntry.tokens.length})
+                  Entry Vocabulary
                 </h2>
-                <p className="text-xs text-[#6E665E] mt-0.5">
-                  Automatically saved &amp; incremented in your Word Bank ·
-                  Reach 20 uses and 20 reviews to unlock pure Arabic reading
+                <p className="text-xs text-[#7A7267] mt-0.5">
+                  Tap any word chip to hear pronunciation · Tap Root to inspect its triliteral root
                 </p>
               </div>
 
               <button
                 type="button"
                 onClick={onNavigateToWordBank}
-                className="min-h-[38px] px-3.5 py-1.5 text-xs font-semibold text-[#2D5A3C] bg-[#2D5A3C]/10 hover:bg-[#2D5A3C]/15 rounded-lg transition-colors whitespace-nowrap shrink-0"
+                className="min-h-[36px] px-3.5 py-1.5 text-xs font-semibold text-[#2D5A3C] bg-[#2D5A3C]/10 hover:bg-[#2D5A3C]/15 rounded-lg transition-colors whitespace-nowrap shrink-0"
               >
-                Open Full Word Bank
+                Word Bank
               </button>
             </div>
 
-            <div className="divide-y divide-[#EAE2D1]">
-              {activeEntry.tokens.map((token, idx) => {
-                const { usageCount, reviewCount, mastered, norm } =
-                  getLiveStatsForToken(token);
-                const rowKey = `${token.arabicWord}-row-${idx}`;
-                const isRootOpen = Boolean(expandedRoots[rowKey]);
-
-                return (
-                  <div
-                    key={rowKey}
-                    className="py-4 first:pt-1 last:pb-1 flex flex-col sm:flex-row sm:items-center justify-between gap-4"
-                  >
-                    <div className="flex items-start gap-3.5">
-                      <button
-                        type="button"
-                        onClick={() => handleSpeakWord(token.arabicWord)}
-                        aria-label={`Pronounce ${token.arabicWord}`}
-                        className="min-h-[42px] min-w-[42px] p-2 rounded-xl bg-[#F3EDE0] hover:bg-[#E6DEC8] text-[#2C2A29] transition-colors flex items-center justify-center shrink-0 mt-0.5"
-                      >
-                        <Volume2 className="w-4 h-4 text-[#2D5A3C]" />
-                      </button>
-
-                      <div>
-                        <div className="flex flex-wrap items-baseline gap-2.5">
-                          <span
-                            dir="rtl"
-                            className="font-arabic text-2xl sm:text-3xl font-bold text-[#2C2A29]"
-                          >
-                            {token.arabicWord}
-                          </span>
-                          <span className="text-xs italic text-[#7A7267]">
-                            ({token.transliteration})
-                          </span>
-                          <span aria-hidden="true" className="text-[#B8AFA0]">
-                            ·
-                          </span>
-                          <span className="text-sm font-semibold text-[#2C2A29]">
-                            {token.englishMeaning}
-                          </span>
-                          <span aria-hidden="true" className="text-[#B8AFA0]">
-                            ·
-                          </span>
-                          <span className="text-xs text-[#7A7267]">
-                            {token.partOfSpeech}
-                          </span>
-                        </div>
-
-                        <p
-                          dir="rtl"
-                          className="font-arabic text-lg text-[#5C554D] mt-0.5 text-right sm:text-left"
-                        >
-                          {token.contextSentenceArabic}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Right Side: 20/20 Progress + Subtle [See Root] Toggle */}
-                    <div className="flex flex-wrap items-center gap-3 sm:justify-end shrink-0">
-                      <div className="text-xs font-mono-tabular text-[#5C554D]">
-                        <span>Used: {usageCount}/20</span>
-                        <span aria-hidden="true"> · </span>
-                        <span>Reviewed: {reviewCount}/20</span>
-                        <span aria-hidden="true"> · </span>
-                        <span
-                          className={
-                            mastered
-                              ? 'text-[#2D5A3C] font-semibold'
-                              : 'text-[#C87D28]'
-                          }
-                        >
-                          {mastered ? 'Mastered (20/20)' : 'Learning'}
-                        </span>
-                      </div>
-
-                      {/* Subtle [See Root] Button */}
-                      <button
-                        type="button"
-                        onClick={() => toggleRootReveal(rowKey)}
-                        className="min-h-[32px] px-2.5 py-1 text-xs font-medium text-[#5C554D] bg-[#F3EDE0] hover:bg-[#E6DEC8] rounded-md transition-colors whitespace-nowrap shrink-0"
-                      >
-                        {isRootOpen ? `Root: ${token.root}` : 'See Root'}
-                      </button>
-
-                      {/* Interactive Demo Helper: Test 20/20 Hidden-English Mastery */}
-                      {!mastered && onFastForwardMastery && (
-                        <button
-                          type="button"
-                          onClick={() => onFastForwardMastery(norm)}
-                          title="Fast-forward this word to 20/20 Mastery to see its English translation hide above"
-                          className="min-h-[32px] px-2.5 py-1 text-xs font-medium text-[#2D5A3C] bg-[#2D5A3C]/10 hover:bg-[#2D5A3C]/20 rounded-md transition-colors flex items-center gap-1 whitespace-nowrap shrink-0"
-                        >
-                          <Eye className="w-3 h-3" />
-                          <span>Test 20/20</span>
-                        </button>
-                      )}
-                    </div>
+            <div className="space-y-6">
+              {/* Nouns */}
+              {categorizedWords.nouns.length > 0 && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#2D5A3C]">
+                      Nouns
+                    </h3>
+                    <span className="text-xs font-mono-tabular text-[#8C8377]">
+                      ({categorizedWords.nouns.length})
+                    </span>
                   </div>
-                );
-              })}
+                  <div className="flex flex-wrap gap-2.5">
+                    {categorizedWords.nouns.map((item) => renderWordChip(item))}
+                  </div>
+                </div>
+              )}
+
+              {/* Verbs */}
+              {categorizedWords.verbs.length > 0 && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#C87D28]">
+                      Verbs
+                    </h3>
+                    <span className="text-xs font-mono-tabular text-[#8C8377]">
+                      ({categorizedWords.verbs.length})
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2.5">
+                    {categorizedWords.verbs.map((item) => renderWordChip(item))}
+                  </div>
+                </div>
+              )}
+
+              {/* Adjectives & Particles */}
+              {categorizedWords.adjectivesAndParticles.length > 0 && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-[#6E665E]">
+                      Adjectives &amp; Particles
+                    </h3>
+                    <span className="text-xs font-mono-tabular text-[#8C8377]">
+                      ({categorizedWords.adjectivesAndParticles.length})
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2.5">
+                    {categorizedWords.adjectivesAndParticles.map((item) =>
+                      renderWordChip(item)
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Distinct "Previously Learned" Section */}
+              {categorizedWords.previouslyLearned.length > 0 && (
+                <div className="pt-5 border-t border-[#EAE2D1] space-y-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2">
+                      <Sparkles className="w-3.5 h-3.5 text-[#2D5A3C]" />
+                      <h3 className="text-xs font-bold uppercase tracking-wider text-[#2C2A29]">
+                        Previously Learned &amp; Mastered
+                      </h3>
+                      <span className="text-xs font-mono-tabular text-[#8C8377]">
+                        ({categorizedWords.previouslyLearned.length})
+                      </span>
+                    </div>
+                    <span className="text-[11px] text-[#7A7267]">
+                      Encountered in earlier entries or study sessions
+                    </span>
+                  </div>
+                  <div className="flex flex-wrap gap-2.5">
+                    {categorizedWords.previouslyLearned.map((item) =>
+                      renderWordChip(item, true)
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </section>
         </div>

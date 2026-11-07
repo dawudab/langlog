@@ -1,12 +1,12 @@
 {
-  "projectId": "osintglobe",
-  "appId": "1:1088350992202:web:876161a89d78ea76b473b3",
-  "apiKey": "AIzaSyD-_E1hcHZ97uWQLypxiWJ6RaBDRyV1eCk",
-  "authDomain": "osintglobe.firebaseapp.com",
+  "projectId": "langjournal-9b6ce",
+  "appId": "1:808440701803:web:1f04e4da8aad93c0dbe22e",
+  "apiKey": "AIzaSyD2IQHTaHWzCFws87ju7LIJqiVMEaGt_3o",
+  "authDomain": "langjournal-9b6ce.firebaseapp.com",
   "firestoreDatabaseId": "ai-studio-langlog-5e6c2433-62fc-4c59-aa05-0cedeb8d1ba8",
-  "storageBucket": "osintglobe.firebasestorage.app",
-  "messagingSenderId": "1088350992202",
+  "storageBucket": "langjournal-9b6ce.firebasestorage.app",
+  "messagingSenderId": "808440701803",
   "measurementId": "",
-  "oAuthClientId": "1088350992202-1a0s5hif2jrb8mevonjeio8kufuustg3.apps.googleusercontent.com",
+  "oAuthClientId": "808440701803-kb07b2n7cfohqbeq4uhmcns43hd2or3u.apps.googleusercontent.com",
   "recaptchaSiteKey": ""
 }

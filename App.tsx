@@ -39,6 +39,9 @@ import {
   subscribeToNotebookFirestore,
 } from './services/notebookRepository';
 
+const CLOZE_SETTING_KEY = 'fusha_notebook_cloze_v4';
+const AUTO_AUDIO_SETTING_KEY = 'fusha_notebook_auto_audio_v4';
+
 const App: React.FC = () => {
   const [activeTab, setActiveTab] = useState<AppTab>('journal');
   const [notification, setNotification] =
@@ -53,11 +56,33 @@ const App: React.FC = () => {
   );
   const [stats, setStats] = useState<UserStats>(() => loadLocalStats());
 
+  // Cloze deletion defaults to true (on automatically)
+  const [clozeMode, setClozeMode] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(CLOZE_SETTING_KEY);
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
+
+  const [autoPlayAudio, setAutoPlayAudio] = useState<boolean>(() => {
+    try {
+      const saved = localStorage.getItem(AUTO_AUDIO_SETTING_KEY);
+      return saved === null ? true : saved === 'true';
+    } catch {
+      return true;
+    }
+  });
+
   const [activeEntryId, setActiveEntryId] = useState<string | null>(() => {
     const initial = loadLocalEntries();
     return initial[0]?.id ?? null;
   });
-  const [isWritingMode, setIsWritingMode] = useState<boolean>(false);
+  const [isWritingMode, setIsWritingMode] = useState<boolean>(() => {
+    const initial = loadLocalEntries();
+    return initial.length === 0;
+  });
 
   useEffect(() => {
     saveLocalEntries(entries);
@@ -70,6 +95,18 @@ const App: React.FC = () => {
   useEffect(() => {
     saveLocalStats(stats);
   }, [stats]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(CLOZE_SETTING_KEY, String(clozeMode));
+    } catch {}
+  }, [clozeMode]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(AUTO_AUDIO_SETTING_KEY, String(autoPlayAudio));
+    } catch {}
+  }, [autoPlayAudio]);
 
   // Silent Cloud Firestore synchronization under the hood
   useEffect(() => {
@@ -115,7 +152,7 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Submit a new English/Arabic journal entry -> Gemini translates to vocalized Fusha & updates Word Bank
+  // Submit a new journal entry -> Gemini translates to vocalized Fusha & updates Word Bank
   const handleSubmitJournalEntry = useCallback(
     async (text: string): Promise<JournalEntry> => {
       const geminiResult = await translateJournalToFusha(text);
@@ -123,7 +160,6 @@ const App: React.FC = () => {
       const entryId = `entry_${Date.now()}`;
       const currentUserId = user?.uid || 'local_user';
 
-      // Map existing word bank by normalizedWord to increment usageCount
       const bankMap = new Map<string, WordBankItem>();
       wordBank.forEach((item) => {
         bankMap.set(normalizeArabicToken(item.normalizedWord), item);
@@ -154,14 +190,12 @@ const App: React.FC = () => {
           arabicWord: raw.arabicWord,
           normalizedWord: norm,
           englishMeaning: raw.englishMeaning,
-          transliteration: raw.transliteration,
           root: raw.root,
           partOfSpeech: raw.partOfSpeech,
           contextSentenceArabic:
             raw.contextSentenceArabic || geminiResult.fullArabicTranslation,
           contextSentenceEnglish: raw.contextSentenceEnglish || text,
-          visualKeyword:
-            raw.visualKeyword || 'morning coffee notebook sunlit window',
+          visualKeyword: raw.visualKeyword ?? null,
           usageCount: nextUsageCount,
           reviewCount: nextReviewCount,
           isMastered: mastered,
@@ -179,7 +213,6 @@ const App: React.FC = () => {
           arabicWord: raw.arabicWord,
           normalizedWord: norm,
           englishMeaning: raw.englishMeaning,
-          transliteration: raw.transliteration,
           root: raw.root,
           partOfSpeech: raw.partOfSpeech,
           contextSentenceArabic: updatedBankItem.contextSentenceArabic,
@@ -205,13 +238,23 @@ const App: React.FC = () => {
         isWordMastered(w)
       ).length;
 
+      const todayStr = nowIso.slice(0, 10);
+      const nextStreak =
+        stats.totalEntries === 0
+          ? 1
+          : stats.lastJournalDate === todayStr
+          ? Math.max(1, stats.currentStreak)
+          : stats.currentStreak + 1;
+
       const nextStats: UserStats = {
         ...stats,
         userId: currentUserId,
+        currentStreak: nextStreak,
+        longestStreak: Math.max(stats.longestStreak, nextStreak),
         totalEntries: entries.length + 1,
         totalWordsEncountered: nextWordBank.length,
         masteredWordsCount: masteredCount,
-        lastJournalDate: nowIso.slice(0, 10),
+        lastJournalDate: todayStr,
         updatedAt: nowIso,
       };
 
@@ -221,7 +264,6 @@ const App: React.FC = () => {
       setActiveEntryId(entryId);
       setIsWritingMode(false);
 
-      // Silently persist to Firestore if authenticated
       if (user) {
         saveJournalEntryToFirestore(newEntry).catch(() => {});
         for (const { item, isNew } of updatedWordsToPersist) {
@@ -230,17 +272,12 @@ const App: React.FC = () => {
         saveUserStatsToFirestore(nextStats).catch(() => {});
       }
 
-      setNotification({
-        type: 'success',
-        message: `Translated into vocalized Fusha Arabic & updated ${enrichedTokens.length} words in your Word Bank.`,
-      });
-
       return newEntry;
     },
     [user, wordBank, stats, entries.length]
   );
 
-  // Handle completing a Tri-Modal Contextual Flashcard review
+  // Handle completing a Contextual Flashcard review
   const handleCompleteFlashcardReview = useCallback(
     (wordId: string, outcome: 'again' | 'got_it') => {
       const target = wordBank.find((w) => w.id === wordId);
@@ -283,74 +320,11 @@ const App: React.FC = () => {
       if (justReachedMastery) {
         setNotification({
           type: 'success',
-          message: `Mabruk! "${target.arabicWord}" reached 20/20 Mastery! Its English translation is now hidden in your journal.`,
+          message: `"${target.arabicWord}" reached 20/20 Mastery!`,
         });
       }
     },
     [wordBank, stats, user]
-  );
-
-  // Interactive helper to let users test/toggle the 20/20 Hidden-English Mastery rule on any word
-  const handleFastForwardMasteryByNorm = useCallback(
-    (normalizedWord: string) => {
-      const norm = normalizeArabicToken(normalizedWord);
-      const existing = wordBank.find(
-        (w) =>
-          normalizeArabicToken(w.normalizedWord) === norm ||
-          normalizeArabicToken(w.arabicWord) === norm
-      );
-
-      if (existing) {
-        const updated: WordBankItem = {
-          ...existing,
-          usageCount: Math.max(20, existing.usageCount),
-          reviewCount: Math.max(20, existing.reviewCount),
-          isMastered: true,
-          updatedAt: new Date().toISOString(),
-        };
-        setWordBank((prev) =>
-          prev.map((w) => (w.id === existing.id ? updated : w))
-        );
-        if (user) {
-          saveWordBankItemToFirestore(updated, false).catch(() => {});
-        }
-        setNotification({
-          type: 'success',
-          message: `"${existing.arabicWord}" promoted to 20/20 Mastery! English gloss is now hidden in the interlinear reader.`,
-        });
-      } else {
-        // Create mastered entry in wordBank if token wasn't in bank yet
-        const activeEntry = entries.find((e) => e.id === activeEntryId);
-        const tokenMatch = activeEntry?.tokens.find(
-          (t) =>
-            normalizeArabicToken(t.normalizedWord) === norm ||
-            normalizeArabicToken(t.arabicWord) === norm
-        );
-        if (!tokenMatch) return;
-
-        const nowIso = new Date().toISOString();
-        const created: WordBankItem = {
-          id: getWordIdForNormalized(norm),
-          userId: user?.uid || 'local_user',
-          ...tokenMatch,
-          normalizedWord: norm,
-          usageCount: 20,
-          reviewCount: 20,
-          isMastered: true,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        };
-        setWordBank((prev) => [created, ...prev]);
-        if (user) {
-          saveWordBankItemToFirestore(created, true).catch(() => {});
-        }
-        setNotification({
-          type: 'success',
-          message: `"${tokenMatch.arabicWord}" promoted to 20/20 Mastery! English gloss is now hidden in the interlinear reader.`,
-        });
-      }
-    },
-    [wordBank, entries, activeEntryId, user]
   );
 
   const handleToggleMasteryInBank = useCallback(
@@ -360,8 +334,8 @@ const App: React.FC = () => {
       const currentlyMastered = isWordMastered(target);
       const updated: WordBankItem = {
         ...target,
-        usageCount: currentlyMastered ? 8 : Math.max(20, target.usageCount),
-        reviewCount: currentlyMastered ? 10 : Math.max(20, target.reviewCount),
+        usageCount: currentlyMastered ? 1 : Math.max(20, target.usageCount),
+        reviewCount: currentlyMastered ? 1 : Math.max(20, target.reviewCount),
         isMastered: !currentlyMastered,
         updatedAt: new Date().toISOString(),
       };
@@ -369,30 +343,23 @@ const App: React.FC = () => {
       if (user) {
         saveWordBankItemToFirestore(updated, false).catch(() => {});
       }
-      setNotification({
-        type: 'success',
-        message: currentlyMastered
-          ? `"${target.arabicWord}" returned to Learning state.`
-          : `"${target.arabicWord}" set to 20/20 Mastered! English translation will now hide in journal entries.`,
-      });
     },
     [wordBank, user]
   );
 
   const handleDeleteEntry = useCallback(
     (entryId: string) => {
-      setEntries((prev) => prev.filter((e) => e.id !== entryId));
+      const remaining = entries.filter((e) => e.id !== entryId);
+      setEntries(remaining);
       if (activeEntryId === entryId) {
-        const remaining = entries.filter((e) => e.id !== entryId);
         setActiveEntryId(remaining[0]?.id ?? null);
+        if (remaining.length === 0) {
+          setIsWritingMode(true);
+        }
       }
       if (user) {
         deleteJournalEntryFromFirestore(entryId).catch(() => {});
       }
-      setNotification({
-        type: 'success',
-        message: 'Notebook page removed.',
-      });
     },
     [activeEntryId, entries, user]
   );
@@ -402,12 +369,12 @@ const App: React.FC = () => {
       await signInWithGoogle();
       setNotification({
         type: 'success',
-        message: 'Signed in with Google.',
+        message: 'Signed in.',
       });
     } catch (error: any) {
       setNotification({
         type: 'error',
-        message: error?.message || 'Google sign-in could not be completed.',
+        message: error?.message || 'Sign-in cancelled.',
       });
     }
   };
@@ -422,13 +389,13 @@ const App: React.FC = () => {
         await registerWithEmail(email, password);
         setNotification({
           type: 'success',
-          message: 'Account created and signed in.',
+          message: 'Account created.',
         });
       } else {
         await signInWithEmail(email, password);
         setNotification({
           type: 'success',
-          message: 'Signed in with email.',
+          message: 'Signed in.',
         });
       }
     } catch (error: any) {
@@ -496,7 +463,6 @@ const App: React.FC = () => {
             onDeleteEntry={handleDeleteEntry}
             onNavigateToStudy={() => setActiveTab('study')}
             onNavigateToWordBank={() => setActiveTab('wordBank')}
-            onFastForwardMastery={handleFastForwardMasteryByNorm}
           />
         )}
 
@@ -511,6 +477,8 @@ const App: React.FC = () => {
         {activeTab === 'study' && (
           <ContextualFlashcardView
             wordBank={wordBank}
+            clozeMode={clozeMode}
+            autoPlayAudio={autoPlayAudio}
             onCompleteReview={handleCompleteFlashcardReview}
             onNavigateToJournal={() => {
               setIsWritingMode(true);
@@ -525,19 +493,16 @@ const App: React.FC = () => {
             wordBank={wordBank}
             entriesCount={entries.length}
             userEmail={user?.email || null}
+            clozeMode={clozeMode}
+            onToggleClozeMode={setClozeMode}
+            autoPlayAudio={autoPlayAudio}
+            onToggleAutoPlayAudio={setAutoPlayAudio}
             onGoogleSignIn={handleGoogleSignIn}
             onEmailAuth={handleEmailAuth}
             onSignOut={handleSignOut}
           />
         )}
       </main>
-
-      <footer className="hidden md:flex items-center justify-between max-w-5xl w-full mx-auto px-8 py-5 text-xs text-[#7A7267] border-t border-[#E6DEC8]">
-        <span>
-          Fusha Notebook · Modern Standard &amp; Quranic Arabic Acquisition
-        </span>
-        <span>20 Uses + 20 Reviews = Direct Arabic Reading</span>
-      </footer>
     </div>
   );
 };

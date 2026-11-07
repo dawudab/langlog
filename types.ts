@@ -9,12 +9,11 @@ export interface WordToken {
   arabicWord: string;
   normalizedWord: string;
   englishMeaning: string;
-  transliteration: string;
   root: string;
   partOfSpeech: string;
   contextSentenceArabic: string;
   contextSentenceEnglish: string;
-  visualKeyword: string;
+  visualKeyword: string | null;
   usageCount: number;
   reviewCount: number;
 }
@@ -56,12 +55,11 @@ export interface GeminiFushaResponse {
     arabicWord: string;
     normalizedWord: string;
     englishMeaning: string;
-    transliteration: string;
     root: string;
     partOfSpeech: string;
     contextSentenceArabic: string;
     contextSentenceEnglish: string;
-    visualKeyword: string;
+    visualKeyword: string | null;
   }>;
 }
 

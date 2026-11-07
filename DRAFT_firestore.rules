@@ -53,7 +53,7 @@ service cloud.firestore {
         && data.fullArabicTranslation.size() >= 1
         && data.fullArabicTranslation.size() <= 15000
         && data.tokens is list
-        && data.tokens.size() <= 80
+        && data.tokens.size() <= 350
         && (data.tokens.size() == 0 || data.tokens[0] is map)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
@@ -65,7 +65,6 @@ service cloud.firestore {
           'arabicWord',
           'normalizedWord',
           'englishMeaning',
-          'transliteration',
           'root',
           'partOfSpeech',
           'contextSentenceArabic',
@@ -82,7 +81,6 @@ service cloud.firestore {
           'arabicWord',
           'normalizedWord',
           'englishMeaning',
-          'transliteration',
           'root',
           'partOfSpeech',
           'contextSentenceArabic',
@@ -108,9 +106,6 @@ service cloud.firestore {
         && data.englishMeaning is string
         && data.englishMeaning.size() >= 1
         && data.englishMeaning.size() <= 500
-        && data.transliteration is string
-        && data.transliteration.size() >= 1
-        && data.transliteration.size() <= 200
         && data.root is string
         && data.root.size() >= 1
         && data.root.size() <= 100
@@ -124,7 +119,7 @@ service cloud.firestore {
         && data.contextSentenceEnglish.size() >= 1
         && data.contextSentenceEnglish.size() <= 1500
         && data.visualKeyword is string
-        && data.visualKeyword.size() >= 1
+        && data.visualKeyword.size() >= 0
         && data.visualKeyword.size() <= 300
         && data.usageCount is number
         && data.usageCount >= 0
@@ -243,7 +238,6 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly([
             'arabicWord',
             'englishMeaning',
-            'transliteration',
             'root',
             'partOfSpeech',
             'contextSentenceArabic',
