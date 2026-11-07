@@ -1,0 +1,227 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 1. Global Safety Net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Hardened Global Primitives
+    function isSignedIn() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // 3. Entity Validation Blueprints
+    function isValidJournalEntry(data) {
+      return data.keys().hasAll([
+          'userId',
+          'originalText',
+          'translatedText',
+          'sourceLanguage',
+          'targetLanguage',
+          'syncStatus',
+          'vocabulary',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId',
+          'originalText',
+          'translatedText',
+          'sourceLanguage',
+          'targetLanguage',
+          'syncStatus',
+          'vocabulary',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.userId is string
+        && data.userId.size() >= 1
+        && data.userId.size() <= 128
+        && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.userId == request.auth.uid
+        && data.originalText is string
+        && data.originalText.size() >= 1
+        && data.originalText.size() <= 10000
+        && data.translatedText is string
+        && data.translatedText.size() <= 15000
+        && data.sourceLanguage is string
+        && data.sourceLanguage.size() >= 2
+        && data.sourceLanguage.size() <= 10
+        && (data.sourceLanguage == 'en' || data.sourceLanguage == 'ar')
+        && data.targetLanguage is string
+        && data.targetLanguage.size() >= 2
+        && data.targetLanguage.size() <= 10
+        && (data.targetLanguage == 'en' || data.targetLanguage == 'ar')
+        && data.syncStatus is string
+        && data.syncStatus.size() >= 1
+        && data.syncStatus.size() <= 20
+        && (data.syncStatus == 'pending' || data.syncStatus == 'synced' || data.syncStatus == 'failed')
+        && data.vocabulary is list
+        && data.vocabulary.size() <= 50
+        && (data.vocabulary.size() == 0 || data.vocabulary[0] is map)
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFlashcard(data) {
+      return data.keys().hasAll([
+          'userId',
+          'entryId',
+          'wordConjugated',
+          'root',
+          'meaning',
+          'context',
+          'targetLanguage',
+          'isNew',
+          'interval',
+          'repetitions',
+          'easeFactor',
+          'nextReviewDate',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId',
+          'entryId',
+          'wordConjugated',
+          'root',
+          'meaning',
+          'context',
+          'targetLanguage',
+          'isNew',
+          'interval',
+          'repetitions',
+          'easeFactor',
+          'nextReviewDate',
+          'createdAt',
+          'updatedAt'
+        ])
+        && data.userId is string
+        && data.userId.size() >= 1
+        && data.userId.size() <= 128
+        && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.userId == request.auth.uid
+        && data.entryId is string
+        && data.entryId.size() >= 1
+        && data.entryId.size() <= 128
+        && data.entryId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.wordConjugated is string
+        && data.wordConjugated.size() >= 1
+        && data.wordConjugated.size() <= 200
+        && data.root is string
+        && data.root.size() >= 1
+        && data.root.size() <= 100
+        && data.meaning is string
+        && data.meaning.size() >= 1
+        && data.meaning.size() <= 500
+        && data.context is string
+        && data.context.size() <= 1000
+        && data.targetLanguage is string
+        && data.targetLanguage.size() >= 2
+        && data.targetLanguage.size() <= 10
+        && (data.targetLanguage == 'en' || data.targetLanguage == 'ar')
+        && data.isNew is bool
+        && data.interval is number
+        && data.interval >= 0
+        && data.interval <= 36500
+        && data.repetitions is number
+        && data.repetitions >= 0
+        && data.repetitions <= 10000
+        && data.easeFactor is number
+        && data.easeFactor >= 1.3
+        && data.easeFactor <= 5.0
+        && data.nextReviewDate is string
+        && data.nextReviewDate.size() >= 1
+        && data.nextReviewDate.size() <= 64
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // 4. Collection Rules: /journalEntries/{entryId}
+    match /journalEntries/{entryId} {
+      allow get: if isSignedIn() && isValidId(entryId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && isValidId(entryId)
+        && isValidJournalEntry(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && isValidId(entryId)
+        && isValidJournalEntry(incoming())
+        && existing().userId == request.auth.uid
+        && incoming().userId == existing().userId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: Sync Translation & Vocabulary or Edit Entry
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'originalText',
+            'translatedText',
+            'sourceLanguage',
+            'targetLanguage',
+            'syncStatus',
+            'vocabulary',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if isSignedIn() && isValidId(entryId) && existing().userId == request.auth.uid;
+    }
+
+    // 5. Collection Rules: /flashcards/{cardId}
+    match /flashcards/{cardId} {
+      allow get: if isSignedIn() && isValidId(cardId) && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && isValidId(cardId)
+        && isValidFlashcard(incoming())
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (
+          (exists(/databases/$(database)/documents/journalEntries/$(incoming().entryId))
+            && get(/databases/$(database)/documents/journalEntries/$(incoming().entryId)).data.userId == request.auth.uid)
+          || (existsAfter(/databases/$(database)/documents/journalEntries/$(incoming().entryId))
+            && getAfter(/databases/$(database)/documents/journalEntries/$(incoming().entryId)).data.userId == request.auth.uid)
+        );
+
+      allow update: if isSignedIn()
+        && isValidId(cardId)
+        && isValidFlashcard(incoming())
+        && existing().userId == request.auth.uid
+        && incoming().userId == existing().userId
+        && incoming().entryId == existing().entryId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Action: SM-2 Review Update
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'isNew',
+            'interval',
+            'repetitions',
+            'easeFactor',
+            'nextReviewDate',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if isSignedIn() && isValidId(cardId) && existing().userId == request.auth.uid;
+    }
+  }
+}

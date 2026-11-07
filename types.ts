@@ -1,9 +1,75 @@
+export type LanguageCode = 'en' | 'ar';
+
 export interface Language {
   code: string;
   name: string;
   speechCode: string;
 }
 
+export type SyncStatus = 'pending' | 'synced' | 'failed';
+
+export interface ExtractedVocab {
+  word_conjugated: string;
+  root: string;
+  meaning: string;
+  context: string;
+  is_new: boolean;
+}
+
+export interface GeminiExtractionResponse {
+  translation: string;
+  vocabulary: ExtractedVocab[];
+}
+
+export interface JournalEntryRecord {
+  id: string;
+  userId: string;
+  originalText: string;
+  translatedText: string;
+  sourceLanguage: LanguageCode;
+  targetLanguage: LanguageCode;
+  syncStatus: SyncStatus;
+  vocabulary: ExtractedVocab[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ReviewGrade = 'hard' | 'good' | 'easy';
+
+export interface SM2Flashcard {
+  id: string;
+  userId: string;
+  entryId: string;
+  wordConjugated: string;
+  root: string;
+  meaning: string;
+  context: string;
+  targetLanguage: LanguageCode;
+  isNew: boolean;
+  interval: number;
+  repetitions: number;
+  easeFactor: number;
+  nextReviewDate: string;
+  createdAt: string;
+  updatedAt: string;
+  pendingSync?: boolean;
+}
+
+export type AppView =
+  | 'journal'
+  | 'study'
+  | 'roots'
+  | 'archive'
+  | 'words'
+  | 'savedEntries'
+  | 'entryDetail';
+
+export interface NotificationMessage {
+  type: 'success' | 'error';
+  message: string;
+}
+
+// Legacy compatibility types
 export interface VocabularyItem {
   original: string;
   translation: string;
@@ -46,11 +112,4 @@ export interface SavedWord extends VocabularyItem {
   targetLangCode: string;
   englishEquivalent: string;
   savedAt: Date;
-}
-
-export type AppView = 'journal' | 'words' | 'savedEntries' | 'entryDetail';
-
-export interface NotificationMessage {
-  type: 'success' | 'error';
-  message: string;
 }

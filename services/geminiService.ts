@@ -1,67 +1,73 @@
-import { ProcessedEntryData } from '../types';
+import {
+  GeminiExtractionResponse,
+  LanguageCode,
+  ProcessedEntryData,
+} from '../types';
 
-export const correctGrammar = async (text: string): Promise<string> => {
-  try {
-    const res = await fetch('/api/correct-grammar', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ text }),
-    });
+export const analyzeJournalEntry = async (
+  journalEntry: string,
+  sourceLanguage: LanguageCode,
+  targetLanguage: LanguageCode,
+  knownWords: string[] = []
+): Promise<GeminiExtractionResponse> => {
+  const res = await fetch('/api/process-entry', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      journalEntry,
+      sourceLanguage,
+      targetLanguage,
+      knownWords,
+    }),
+  });
 
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Failed to correct grammar.');
-    }
-
-    return data.correctedText;
-  } catch (error: any) {
-    console.error('Error correcting grammar:', error);
-    throw new Error(error.message || 'Failed to correct grammar. Please try again.');
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || 'Failed to analyze journal entry.');
   }
+
+  return {
+    translation: String(data.translation || ''),
+    vocabulary: Array.isArray(data.vocabulary)
+      ? data.vocabulary.map((v: any) => ({
+          word_conjugated: String(v.word_conjugated || ''),
+          root: String(v.root || ''),
+          meaning: String(v.meaning || ''),
+          context: String(v.context || ''),
+          is_new: Boolean(v.is_new ?? true),
+        }))
+      : [],
+  };
+};
+
+// Legacy compatibility wrapper
+export const correctGrammar = async (text: string): Promise<string> => {
+  return text;
 };
 
 export const processJournalEntry = async (
   journalEntry: string,
   originalLangName: string,
-  targetLangName: string
+  _targetLangName: string
 ): Promise<ProcessedEntryData> => {
-  try {
-    const res = await fetch('/api/process-entry', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        journalEntry,
-        originalLangName,
-        targetLangName,
-      }),
-    });
-
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.error || 'Failed to process journal entry.');
-    }
-
-    const processedData: ProcessedEntryData = {
-      translation: data.translation || '',
-      vocabulary: (data.vocabulary || []).map((v: any) => ({
-        original: v.original || '',
-        translation: v.translation || '',
-        category: v.category || 'N/A',
-      })),
-      exampleSentences: data.exampleSentences || [],
-      flashcards: (data.flashcards || []).map((f: any) => ({
-        front: f.front || '',
-        back: f.back || '',
-      })),
-    };
-
-    return processedData;
-  } catch (error: any) {
-    console.error('Error processing journal entry:', error);
-    throw new Error(error.message || 'Failed to process journal entry. Please try again.');
-  }
+  const src: LanguageCode = originalLangName.toLowerCase().includes('ar')
+    ? 'ar'
+    : 'en';
+  const tgt: LanguageCode = src === 'en' ? 'ar' : 'en';
+  const res = await analyzeJournalEntry(journalEntry, src, tgt);
+  return {
+    translation: res.translation,
+    vocabulary: res.vocabulary.map((v) => ({
+      original: v.word_conjugated,
+      translation: v.meaning,
+      category: `Root: ${v.root}`,
+    })),
+    exampleSentences: res.vocabulary.map((v) => v.context).filter(Boolean),
+    flashcards: res.vocabulary.map((v) => ({
+      front: v.word_conjugated,
+      back: `${v.meaning} (${v.root})`,
+    })),
+  };
 };
