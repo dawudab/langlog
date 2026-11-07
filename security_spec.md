@@ -1,27 +1,21 @@
 # Security Specification (`security_spec.md`)
 
-## 1. Data Invariants
+## 1. Data Invariants & Master Source of Truth
+- **Identity & Verification Invariant**: Every write or read operation requires an authenticated user with a verified email (`request.auth != null && request.auth.token.email_verified == true`).
+- **Ownership Invariant**: Every document in `/journalEntries/{entryId}`, `/wordBank/{wordId}`, and `/userStats/{userId}` belongs strictly to a single owner (`userId == request.auth.uid`). For `/userStats/{userId}`, the document ID `{userId}` must also strictly equal `request.auth.uid`.
+- **20/20 Mastery Invariant**: In `/wordBank/{wordId}`, `isMastered` is a boolean that must equal `(usageCount >= 20 && reviewCount >= 20)`.
+- **Temporal Integrity**: `createdAt` and `updatedAt` must equal `request.time` on creation, `createdAt` and `userId` are immutable on updates, and `updatedAt` must equal `request.time` on updates.
 
-1. **Authentication & Email Verification Invariant**: Every read and write to `/journalEntries/{entryId}` and `/flashcards/{cardId}` requires an authenticated user (`request.auth != null`) with a verified email (`request.auth.token.email_verified == true`).
-2. **Ownership Invariant**: Users can only read, create, update, or delete their own documents (`userId == request.auth.uid`). `userId` and `createdAt` are immutable once created.
-3. **Relational Integrity Invariant**: A `Flashcard` document in `/flashcards/{cardId}` can only be created if its `entryId` references an existing `JournalEntry` in `/journalEntries/$(incoming().entryId)` owned by the same `request.auth.uid` (or created in the same atomic batch via `existsAfter`).
-4. **Schema & Volumetric Bounds Invariant**:
-   - All document IDs (`entryId`, `cardId`) must match `^[a-zA-Z0-9_\-]+$` and be `<= 128` chars.
-   - `JournalEntry.vocabulary` list must be bounded (`size() <= 50`).
-   - `Flashcard.easeFactor` must be `>= 1.3` and `<= 5.0`, `interval >= 0`, `repetitions >= 0`.
-   - Temporal fields `createdAt` and `updatedAt` must equal `request.time`.
-
-## 2. The "Dirty Dozen" Payloads
-
-1. **Unauthenticated Write**: Creating a `journalEntries` document with `request.auth == null`.
-2. **Unverified Email Spoof**: Creating a `journalEntries` document where `request.auth.token.email_verified == false`.
-3. **Identity Spoofing on Create**: Creating a `journalEntries` document where `userId != request.auth.uid`.
-4. **Shadow Field Injection**: Updating a `journalEntries` document with an undeclared field `isAdmin: true`.
-5. **Owner Mutation on Update**: Updating `userId` on an existing `journalEntries` document to another user's UID.
-6. **Immutable Timestamp Tampering**: Updating `createdAt` on an existing `journalEntries` or `flashcards` document.
-7. **Forged Client Timestamp**: Creating a `journalEntries` document where `createdAt != request.time`.
-8. **ID Poisoning**: Creating a document with an invalid ID containing spaces or exceeding 128 characters.
-9. **Denial-of-Wallet Oversized String**: Creating a `journalEntries` document where `originalText.size() > 10000`.
-10. **Unbounded Vocabulary Array**: Creating a `journalEntries` document with `vocabulary.size() > 50`.
-11. **Orphaned Flashcard Creation**: Creating a `flashcards` document whose `entryId` does not exist in `/journalEntries/{entryId}` or belongs to a different user.
-12. **Blanket List Query Scraping**: Listing `/journalEntries` or `/flashcards` without filtering `resource.data.userId == request.auth.uid`.
+## 2. The "Dirty Dozen" Adversarial Payloads
+1. **Unverified Email Spoof**: Authenticated user with `email_verified: false` attempting to create a journal entry.
+2. **Identity Spoofing on JournalEntry**: Setting `userId` to another user's UID during `create` on `/journalEntries/{entryId}`.
+3. **Shadow Field Injection on JournalEntry**: Adding `isAdmin: true` to `/journalEntries/{entryId}`.
+4. **Oversized String DoS on JournalEntry**: Sending `originalText` with 25,000 characters (`> 10000`).
+5. **Unbounded Token Array DoS**: Sending `tokens` array with 120 items (`> 80`).
+6. **Client Timestamp Forgery**: Providing a past timestamp for `createdAt` instead of `request.time`.
+7. **Immutable Field Mutation**: Attempting to change `createdAt` or `userId` on `/journalEntries/{entryId}` update.
+8. **20/20 Mastery Forgery on WordBankItem**: Attempting to set `isMastered: true` when `usageCount: 3` and `reviewCount: 5`.
+9. **Value Poisoning on WordBankItem Update**: Attempting to set `usageCount: -5` or `reviewCount: "twenty"`.
+10. **Cross-Tenant List Scraping**: Querying `/wordBank` without filtering by `userId == request.auth.uid`.
+11. **Path ID Poisoning**: Creating `/wordBank/{wordId}` with a 200-character or special-character document ID.
+12. **UserStats Mismatched Path ID**: Creating `/userStats/{otherUserId}` where `otherUserId != request.auth.uid`.

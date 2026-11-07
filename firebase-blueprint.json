@@ -2,7 +2,7 @@
   "entities": {
     "JournalEntry": {
       "title": "JournalEntry",
-      "description": "A dual-language journal entry written by a user with AI translation and extracted root vocabulary.",
+      "description": "A daily notebook journal entry written in English/Arabic and translated into vocalized Fusha Arabic with interactive interlinear tokens.",
       "type": "object",
       "properties": {
         "userId": {
@@ -14,39 +14,19 @@
         },
         "originalText": {
           "type": "string",
-          "description": "The original journal entry text written in the source language.",
+          "description": "The user's original journal entry text.",
           "minLength": 1,
           "maxLength": 10000
         },
-        "translatedText": {
+        "fullArabicTranslation": {
           "type": "string",
-          "description": "The AI-translated text in the target language.",
+          "description": "The full vocalized Fusha (Modern Standard / Quranic) Arabic translation.",
+          "minLength": 1,
           "maxLength": 15000
         },
-        "sourceLanguage": {
-          "type": "string",
-          "description": "ISO language code of the original entry (en or ar).",
-          "enum": ["en", "ar"],
-          "minLength": 2,
-          "maxLength": 10
-        },
-        "targetLanguage": {
-          "type": "string",
-          "description": "ISO language code of the target translation (en or ar).",
-          "enum": ["en", "ar"],
-          "minLength": 2,
-          "maxLength": 10
-        },
-        "syncStatus": {
-          "type": "string",
-          "description": "Synchronization status of the entry.",
-          "enum": ["pending", "synced", "failed"],
-          "minLength": 1,
-          "maxLength": 20
-        },
-        "vocabulary": {
+        "tokens": {
           "type": "array",
-          "description": "Bounded list of extracted vocabulary items (max 50 items)."
+          "description": "Bounded list of tokenized Fusha Arabic words with meanings, roots, and context sentences (max 80 tokens)."
         },
         "createdAt": {
           "type": "string",
@@ -62,111 +42,176 @@
       "required": [
         "userId",
         "originalText",
-        "translatedText",
-        "sourceLanguage",
-        "targetLanguage",
-        "syncStatus",
-        "vocabulary",
+        "fullArabicTranslation",
+        "tokens",
         "createdAt",
         "updatedAt"
       ]
     },
-    "Flashcard": {
-      "title": "Flashcard",
-      "description": "An SM-2 spaced repetition flashcard containing conjugated target vocabulary and its Arabic triliteral root or English base form.",
+    "WordBankItem": {
+      "title": "WordBankItem",
+      "description": "A vocalized Fusha Arabic word in the user's Word Bank tracking usageCount and reviewCount toward the 20/20 Mastery Rule.",
       "type": "object",
       "properties": {
         "userId": {
           "type": "string",
-          "description": "The UID of the authenticated user who owns this flashcard.",
+          "description": "The UID of the authenticated user who owns this vocabulary word.",
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_\\-]+$"
         },
-        "entryId": {
+        "arabicWord": {
           "type": "string",
-          "description": "The ID of the parent JournalEntry from which this word was extracted.",
+          "description": "Vocalized Fusha Arabic word with Harakat.",
           "minLength": 1,
-          "maxLength": 128,
-          "pattern": "^[a-zA-Z0-9_\\-]+$"
+          "maxLength": 200
         },
-        "wordConjugated": {
+        "normalizedWord": {
           "type": "string",
-          "description": "Target language word in its conjugated or inflected form.",
+          "description": "Unvocalized base Arabic lemma used to match occurrences across journal entries.",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "englishMeaning": {
+          "type": "string",
+          "description": "Concise English meaning of the word.",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "transliteration": {
+          "type": "string",
+          "description": "Latin transliteration for pronunciation guidance.",
           "minLength": 1,
           "maxLength": 200
         },
         "root": {
           "type": "string",
-          "description": "Base form or Arabic triliteral root (e.g., ش ر ي).",
+          "description": "Spaced 3-letter Arabic triliteral root (e.g., س ج د).",
           "minLength": 1,
           "maxLength": 100
         },
-        "meaning": {
+        "partOfSpeech": {
           "type": "string",
-          "description": "Native language meaning.",
-          "minLength": 1,
-          "maxLength": 500
-        },
-        "context": {
-          "type": "string",
-          "description": "Short context phrase from the journal entry.",
-          "maxLength": 1000
-        },
-        "targetLanguage": {
-          "type": "string",
-          "description": "Target language code (en or ar).",
-          "enum": ["en", "ar"],
-          "minLength": 2,
-          "maxLength": 10
-        },
-        "isNew": {
-          "type": "boolean",
-          "description": "True if the card has not been reviewed yet; prioritized in the daily SRS queue."
-        },
-        "interval": {
-          "type": "number",
-          "description": "SM-2 review interval in days."
-        },
-        "repetitions": {
-          "type": "number",
-          "description": "SM-2 consecutive successful recall count."
-        },
-        "easeFactor": {
-          "type": "number",
-          "description": "SM-2 ease factor multiplier (>= 1.3)."
-        },
-        "nextReviewDate": {
-          "type": "string",
-          "description": "ISO date string for the next scheduled SM-2 review.",
+          "description": "Grammatical part of speech (e.g., noun, verb, particle, adjective).",
           "minLength": 1,
           "maxLength": 64
+        },
+        "contextSentenceArabic": {
+          "type": "string",
+          "description": "Vocalized Fusha context sentence from the user's journal entry.",
+          "minLength": 1,
+          "maxLength": 1500
+        },
+        "contextSentenceEnglish": {
+          "type": "string",
+          "description": "English translation of the context sentence.",
+          "minLength": 1,
+          "maxLength": 1500
+        },
+        "visualKeyword": {
+          "type": "string",
+          "description": "Visual cue prompt keywords for contextual flashcards.",
+          "minLength": 1,
+          "maxLength": 300
+        },
+        "usageCount": {
+          "type": "number",
+          "description": "Number of times this word has been used across journal entries (20 required for mastery)."
+        },
+        "reviewCount": {
+          "type": "number",
+          "description": "Number of times this word has been reviewed in the contextual flashcard engine (20 required for mastery)."
+        },
+        "isMastered": {
+          "type": "boolean",
+          "description": "True when usageCount >= 20 and reviewCount >= 20."
         },
         "createdAt": {
           "type": "string",
           "format": "date-time",
-          "description": "Server timestamp when the flashcard was created."
+          "description": "Server timestamp when the word was first added."
         },
         "updatedAt": {
           "type": "string",
           "format": "date-time",
-          "description": "Server timestamp when the flashcard was last updated."
+          "description": "Server timestamp when the word was last updated."
         }
       },
       "required": [
         "userId",
-        "entryId",
-        "wordConjugated",
+        "arabicWord",
+        "normalizedWord",
+        "englishMeaning",
+        "transliteration",
         "root",
-        "meaning",
-        "context",
-        "targetLanguage",
-        "isNew",
-        "interval",
-        "repetitions",
-        "easeFactor",
-        "nextReviewDate",
+        "partOfSpeech",
+        "contextSentenceArabic",
+        "contextSentenceEnglish",
+        "visualKeyword",
+        "usageCount",
+        "reviewCount",
+        "isMastered",
         "createdAt",
+        "updatedAt"
+      ]
+    },
+    "UserStats": {
+      "title": "UserStats",
+      "description": "Tracks user journaling streaks, volume, reviews, and 20/20 mastery progress.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "The UID of the authenticated user.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "currentStreak": {
+          "type": "number",
+          "description": "Current consecutive days of journaling."
+        },
+        "longestStreak": {
+          "type": "number",
+          "description": "Longest consecutive days of journaling."
+        },
+        "totalEntries": {
+          "type": "number",
+          "description": "Total journal entries written."
+        },
+        "totalWordsEncountered": {
+          "type": "number",
+          "description": "Total unique Fusha words in the Word Bank."
+        },
+        "totalReviewsCompleted": {
+          "type": "number",
+          "description": "Total contextual flashcard reviews completed."
+        },
+        "masteredWordsCount": {
+          "type": "number",
+          "description": "Total words that have reached 20/20 mastery."
+        },
+        "lastJournalDate": {
+          "type": "string",
+          "description": "YYYY-MM-DD date string of the most recent journal entry.",
+          "minLength": 1,
+          "maxLength": 32
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when stats were last updated."
+        }
+      },
+      "required": [
+        "userId",
+        "currentStreak",
+        "longestStreak",
+        "totalEntries",
+        "totalWordsEncountered",
+        "totalReviewsCompleted",
+        "masteredWordsCount",
+        "lastJournalDate",
         "updatedAt"
       ]
     }
@@ -176,13 +221,19 @@
       "schema": {
         "$ref": "#/entities/JournalEntry"
       },
-      "description": "Stores user journal entries with translations and extracted vocabulary."
+      "description": "Stores user journal entries with vocalized Fusha translations and interlinear tokens."
     },
-    "/flashcards/{cardId}": {
+    "/wordBank/{wordId}": {
       "schema": {
-        "$ref": "#/entities/Flashcard"
+        "$ref": "#/entities/WordBankItem"
       },
-      "description": "Stores user SM-2 spaced repetition flashcards linked to journal entries."
+      "description": "Stores user Fusha vocabulary items and their 20/20 usageCount and reviewCount mastery progress."
+    },
+    "/userStats/{userId}": {
+      "schema": {
+        "$ref": "#/entities/UserStats"
+      },
+      "description": "Stores user streak, volume, and mastery progress statistics."
     }
   }
 }

@@ -7,129 +7,301 @@ import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-interface ExtractedVocabItem {
-  word_conjugated: string;
+interface FushaTokenPayload {
+  arabicWord: string;
+  normalizedWord: string;
+  englishMeaning: string;
+  transliteration: string;
   root: string;
-  meaning: string;
-  context: string;
-  is_new: boolean;
+  partOfSpeech: string;
+  contextSentenceArabic: string;
+  contextSentenceEnglish: string;
+  visualKeyword: string;
 }
 
-interface GeminiJournalResponse {
-  translation: string;
-  vocabulary: ExtractedVocabItem[];
+interface GeminiFushaTranslationPayload {
+  fullArabicTranslation: string;
+  tokens: FushaTokenPayload[];
 }
 
-function buildLinguisticFallback(
-  text: string,
-  sourceLanguage: 'en' | 'ar',
-  targetLanguage: 'en' | 'ar',
-  knownWords: string[] = []
-): GeminiJournalResponse {
-  const knownSet = new Set(knownWords.map((w) => w.toLowerCase().trim()));
-  const trimmed = text.trim();
+function normalizeArabicServer(input: string): string {
+  return input
+    .replace(/[\u064B-\u065F\u0670\u0640]/g, '')
+    .replace(/[.,،؛؟!":«»()[\]]/g, '')
+    .replace(/[أإآ]/g, 'ا')
+    .trim();
+}
 
-  if (sourceLanguage === 'en' && targetLanguage === 'ar') {
-    const dictionary: Array<{
-      match: RegExp;
-      word_conjugated: string;
-      root: string;
-      meaning: string;
-      context: string;
-    }> = [
-      {
-        match: /\b(morning|woke|early|today|day)\b/i,
-        word_conjugated: 'في الصباح الباكر',
-        root: 'ص ب ح',
-        meaning: 'in the early morning',
-        context: 'ذهبت في الصباح الباكر',
-      },
-      {
-        match: /\b(coffee|tea|cafe|drink|drank|cup)\b/i,
-        word_conjugated: 'شربتُ القهوة',
-        root: 'ش ر ب',
-        meaning: 'I drank coffee',
-        context: 'شربتُ القهوة في المقهى الهادئ',
-      },
-      {
-        match: /\b(write|writing|journal|diary|notes|book|read)\b/i,
-        word_conjugated: 'أكتبُ يومياتي',
-        root: 'ك ت ب',
-        meaning: 'I write my journal',
-        context: 'أكتبُ يومياتي كل يوم لتعلم اللغة',
-      },
-      {
-        match: /\b(learn|study|studying|arabic|language|words)\b/i,
-        word_conjugated: 'أتعلّمُ العربية',
-        root: 'ع ل م',
-        meaning: 'I am learning Arabic',
-        context: 'أتعلّمُ العربية من خلال الكتابة اليومية',
-      },
-      {
-        match: /\b(walk|walked|city|street|market|went|bought)\b/i,
-        word_conjugated: 'اشتريتُ من السوق',
-        root: 'ش ر ي',
-        meaning: 'I bought from the market',
-        context: 'ذهبتُ إلى السوق واشتريتُ كتاباً جديداً',
-      },
-      {
-        match: /\b(friend|friends|met|talked|spoke|family)\b/i,
-        word_conjugated: 'تحدثتُ مع صديقي',
-        root: 'ح د ث',
-        meaning: 'I spoke with my friend',
-        context: 'تحدثتُ مع صديقي عن رحلتنا القادمة',
-      },
-    ];
+function buildFushaLinguisticFallback(
+  text: string
+): GeminiFushaTranslationPayload {
+  const lower = text.toLowerCase();
 
-    const matched = dictionary.filter((item) => item.match.test(trimmed));
-    const selected =
-      matched.length >= 2
-        ? matched
-        : [
-            dictionary[2],
-            dictionary[3],
-            dictionary[4],
-            dictionary[1],
-          ];
-
+  if (lower.includes('mosque') || lower.includes('dawn') || lower.includes('fajr') || lower.includes('pray')) {
     return {
-      translation:
-        'اليوم كتبتُ في دفتر يومياتي عن تفاصيل يومي. شربتُ القهوة في الصباح الباكر، ثم ذهبتُ إلى السوق واشتريتُ كتاباً جديداً لأتعلّمَ مفردات اللغة العربية وجذورها الثلاثية.',
-      vocabulary: selected.map((v) => ({
-        word_conjugated: v.word_conjugated,
-        root: v.root,
-        meaning: v.meaning,
-        context: v.context,
-        is_new: !knownSet.has(v.word_conjugated.toLowerCase()),
-      })),
+      fullArabicTranslation:
+        'ذَهَبْتُ إِلَى الْمَسْجِدِ فَجْرًا وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ وَهُدُوءٍ.',
+      tokens: [
+        {
+          arabicWord: 'ذَهَبْتُ',
+          normalizedWord: 'ذهبت',
+          englishMeaning: 'I went',
+          transliteration: 'dhahabtu',
+          root: 'ذ ه ب',
+          partOfSpeech: 'verb',
+          contextSentenceArabic: 'ذَهَبْتُ إِلَى الْمَسْجِدِ فَجْرًا.',
+          contextSentenceEnglish: 'I went to the mosque at dawn.',
+          visualKeyword: 'mosque dawn peaceful architecture',
+        },
+        {
+          arabicWord: 'إِلَى',
+          normalizedWord: 'الى',
+          englishMeaning: 'to / toward',
+          transliteration: 'ilā',
+          root: 'إ ل ي',
+          partOfSpeech: 'particle',
+          contextSentenceArabic: 'ذَهَبْتُ إِلَى الْمَسْجِدِ فَجْرًا.',
+          contextSentenceEnglish: 'I went to the mosque at dawn.',
+          visualKeyword: 'mosque dawn peaceful architecture',
+        },
+        {
+          arabicWord: 'الْمَسْجِدِ',
+          normalizedWord: 'مسجد',
+          englishMeaning: 'the mosque',
+          transliteration: 'al-masjidi',
+          root: 'س ج د',
+          partOfSpeech: 'noun',
+          contextSentenceArabic: 'ذَهَبْتُ إِلَى الْمَسْجِدِ فَجْرًا.',
+          contextSentenceEnglish: 'I went to the mosque at dawn.',
+          visualKeyword: 'mosque dawn peaceful architecture',
+        },
+        {
+          arabicWord: 'فَجْرًا',
+          normalizedWord: 'فجر',
+          englishMeaning: 'at dawn',
+          transliteration: 'fajran',
+          root: 'ف ج ر',
+          partOfSpeech: 'noun',
+          contextSentenceArabic: 'ذَهَبْتُ إِلَى الْمَسْجِدِ فَجْرًا.',
+          contextSentenceEnglish: 'I went to the mosque at dawn.',
+          visualKeyword: 'mosque dawn peaceful architecture',
+        },
+        {
+          arabicWord: 'وَقَرَأْتُ',
+          normalizedWord: 'قرأت',
+          englishMeaning: 'and I recited / read',
+          transliteration: 'wa-qara’tu',
+          root: 'ق ر أ',
+          partOfSpeech: 'verb',
+          contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ.',
+          contextSentenceEnglish: 'And I recited the Noble Quran in tranquility.',
+          visualKeyword: 'library books calligraphy manuscript',
+        },
+        {
+          arabicWord: 'الْقُرْآنَ',
+          normalizedWord: 'قران',
+          englishMeaning: 'the Quran',
+          transliteration: 'al-Qur’āna',
+          root: 'ق ر أ',
+          partOfSpeech: 'noun',
+          contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ.',
+          contextSentenceEnglish: 'And I recited the Noble Quran in tranquility.',
+          visualKeyword: 'library books calligraphy manuscript',
+        },
+        {
+          arabicWord: 'الْكَرِيمَ',
+          normalizedWord: 'كريم',
+          englishMeaning: 'the Noble / Generous',
+          transliteration: 'al-karīma',
+          root: 'ك ر م',
+          partOfSpeech: 'adjective',
+          contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ.',
+          contextSentenceEnglish: 'And I recited the Noble Quran in tranquility.',
+          visualKeyword: 'library books calligraphy manuscript',
+        },
+        {
+          arabicWord: 'فِي',
+          normalizedWord: 'في',
+          englishMeaning: 'in',
+          transliteration: 'fī',
+          root: 'ف ي',
+          partOfSpeech: 'particle',
+          contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ وَهُدُوءٍ.',
+          contextSentenceEnglish: 'And I recited the Noble Quran in tranquility and peace.',
+          visualKeyword: 'garden olive trees peaceful courtyard',
+        },
+        {
+          arabicWord: 'سَكِينَةٍ',
+          normalizedWord: 'سكينة',
+          englishMeaning: 'tranquility / serenity',
+          transliteration: 'sakīnatin',
+          root: 'س ك ن',
+          partOfSpeech: 'noun',
+          contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ وَهُدُوءٍ.',
+          contextSentenceEnglish: 'And I recited the Noble Quran in tranquility and peace.',
+          visualKeyword: 'garden olive trees peaceful courtyard',
+        },
+        {
+          arabicWord: 'وَهُدُوءٍ.',
+          normalizedWord: 'هدوء',
+          englishMeaning: 'and quietude',
+          transliteration: 'wa-hudū’in',
+          root: 'ه د أ',
+          partOfSpeech: 'noun',
+          contextSentenceArabic: 'وَقَرَأْتُ الْقُرْآنَ الْكَرِيمَ فِي سَكِينَةٍ وَهُدُوءٍ.',
+          contextSentenceEnglish: 'And I recited the Noble Quran in tranquility and peace.',
+          visualKeyword: 'garden olive trees peaceful courtyard',
+        },
+      ],
     };
   }
 
-  // Arabic -> English fallback
   return {
-    translation:
-      'Today I wrote in my journal about my daily reflections, practicing new expressions and building lasting fluency through context.',
-    vocabulary: [
+    fullArabicTranslation:
+      'فِي الصَّبَاحِ الْبَاكِرِ شَرِبْتُ الْقَهْوَةَ الْعَرَبِيَّةَ وَكَتَبْتُ أَفْكَارِي فِي دَفْتَرِ الْيَوْمِيَّاتِ لِأَتَعَلَّمَ اللُّغَةَ الْعَرَبِيَّةَ الْفُصْحَى.',
+    tokens: [
       {
-        word_conjugated: 'reflections',
-        root: 'reflect (Latin: reflectere)',
-        meaning: 'تأملات / أفكار عميقة',
-        context: 'wrote in my journal about my daily reflections',
-        is_new: !knownSet.has('reflections'),
+        arabicWord: 'فِي',
+        normalizedWord: 'في',
+        englishMeaning: 'in',
+        transliteration: 'fī',
+        root: 'ف ي',
+        partOfSpeech: 'particle',
+        contextSentenceArabic: 'فِي الصَّبَاحِ الْبَاكِرِ شَرِبْتُ الْقَهْوَةَ.',
+        contextSentenceEnglish: 'In the early morning I drank coffee.',
+        visualKeyword: 'morning coffee notebook sunlit window',
       },
       {
-        word_conjugated: 'fluency',
-        root: 'fluent / flow',
-        meaning: 'طلاقة اللسان والفصاحة',
-        context: 'building lasting fluency through context',
-        is_new: !knownSet.has('fluency'),
+        arabicWord: 'الصَّبَاحِ',
+        normalizedWord: 'صباح',
+        englishMeaning: 'the morning',
+        transliteration: 'aṣ-ṣabāḥi',
+        root: 'ص ب ح',
+        partOfSpeech: 'noun',
+        contextSentenceArabic: 'فِي الصَّبَاحِ الْبَاكِرِ شَرِبْتُ الْقَهْوَةَ.',
+        contextSentenceEnglish: 'In the early morning I drank coffee.',
+        visualKeyword: 'morning coffee notebook sunlit window',
       },
       {
-        word_conjugated: 'expressions',
-        root: 'express',
-        meaning: 'تعبيرات ومصطلحات',
-        context: 'practicing new expressions every morning',
-        is_new: !knownSet.has('expressions'),
+        arabicWord: 'الْبَاكِرِ',
+        normalizedWord: 'باكر',
+        englishMeaning: 'the early',
+        transliteration: 'al-bākiri',
+        root: 'ب ك ر',
+        partOfSpeech: 'adjective',
+        contextSentenceArabic: 'فِي الصَّبَاحِ الْبَاكِرِ شَرِبْتُ الْقَهْوَةَ.',
+        contextSentenceEnglish: 'In the early morning I drank coffee.',
+        visualKeyword: 'morning coffee notebook sunlit window',
+      },
+      {
+        arabicWord: 'شَرِبْتُ',
+        normalizedWord: 'شربت',
+        englishMeaning: 'I drank',
+        transliteration: 'sharibtu',
+        root: 'ش ر ب',
+        partOfSpeech: 'verb',
+        contextSentenceArabic: 'فِي الصَّبَاحِ الْبَاكِرِ شَرِبْتُ الْقَهْوَةَ الْعَرَبِيَّةَ.',
+        contextSentenceEnglish: 'In the early morning I drank Arabic coffee.',
+        visualKeyword: 'morning coffee notebook sunlit window',
+      },
+      {
+        arabicWord: 'الْقَهْوَةَ',
+        normalizedWord: 'قهوة',
+        englishMeaning: 'the coffee',
+        transliteration: 'al-qahwata',
+        root: 'ق ه و',
+        partOfSpeech: 'noun',
+        contextSentenceArabic: 'فِي الصَّبَاحِ الْبَاكِرِ شَرِبْتُ الْقَهْوَةَ الْعَرَبِيَّةَ.',
+        contextSentenceEnglish: 'In the early morning I drank Arabic coffee.',
+        visualKeyword: 'morning coffee notebook sunlit window',
+      },
+      {
+        arabicWord: 'الْعَرَبِيَّةَ',
+        normalizedWord: 'عربية',
+        englishMeaning: 'the Arabic',
+        transliteration: 'al-‘arabiyyata',
+        root: 'ع ر ب',
+        partOfSpeech: 'adjective',
+        contextSentenceArabic: 'شَرِبْتُ الْقَهْوَةَ الْعَرَبِيَّةَ.',
+        contextSentenceEnglish: 'I drank Arabic coffee.',
+        visualKeyword: 'morning coffee notebook sunlit window',
+      },
+      {
+        arabicWord: 'وَكَتَبْتُ',
+        normalizedWord: 'كتبت',
+        englishMeaning: 'and I wrote',
+        transliteration: 'wa-katabtu',
+        root: 'ك ت ب',
+        partOfSpeech: 'verb',
+        contextSentenceArabic: 'وَكَتَبْتُ أَفْكَارِي فِي دَفْتَرِ الْيَوْمِيَّاتِ.',
+        contextSentenceEnglish: 'And I wrote my thoughts in the journal notebook.',
+        visualKeyword: 'library books calligraphy manuscript',
+      },
+      {
+        arabicWord: 'أَفْكَارِي',
+        normalizedWord: 'افكاري',
+        englishMeaning: 'my thoughts',
+        transliteration: 'afkārī',
+        root: 'ف ك ر',
+        partOfSpeech: 'noun',
+        contextSentenceArabic: 'وَكَتَبْتُ أَفْكَارِي فِي دَفْتَرِ الْيَوْمِيَّاتِ.',
+        contextSentenceEnglish: 'And I wrote my thoughts in the journal notebook.',
+        visualKeyword: 'library books calligraphy manuscript',
+      },
+      {
+        arabicWord: 'دَفْتَرِ',
+        normalizedWord: 'دفتر',
+        englishMeaning: 'notebook',
+        transliteration: 'daftari',
+        root: 'د ف ت ر',
+        partOfSpeech: 'noun',
+        contextSentenceArabic: 'وَكَتَبْتُ أَفْكَارِي فِي دَفْتَرِ الْيَوْمِيَّاتِ.',
+        contextSentenceEnglish: 'And I wrote my thoughts in the journal notebook.',
+        visualKeyword: 'morning coffee notebook sunlit window',
+      },
+      {
+        arabicWord: 'الْيَوْمِيَّاتِ',
+        normalizedWord: 'يوميات',
+        englishMeaning: 'the daily journal',
+        transliteration: 'al-yawmiyyāti',
+        root: 'ي و م',
+        partOfSpeech: 'noun',
+        contextSentenceArabic: 'وَكَتَبْتُ أَفْكَارِي فِي دَفْتَرِ الْيَوْمِيَّاتِ.',
+        contextSentenceEnglish: 'And I wrote my thoughts in the journal notebook.',
+        visualKeyword: 'morning coffee notebook sunlit window',
+      },
+      {
+        arabicWord: 'لِأَتَعَلَّمَ',
+        normalizedWord: 'اتعلم',
+        englishMeaning: 'so that I learn',
+        transliteration: 'li-ata‘allama',
+        root: 'ع ل م',
+        partOfSpeech: 'verb',
+        contextSentenceArabic: 'لِأَتَعَلَّمَ اللُّغَةَ الْعَرَبِيَّةَ الْفُصْحَى.',
+        contextSentenceEnglish: 'So that I learn eloquent Fusha Arabic.',
+        visualKeyword: 'library books calligraphy manuscript',
+      },
+      {
+        arabicWord: 'اللُّغَةَ',
+        normalizedWord: 'لغة',
+        englishMeaning: 'the language',
+        transliteration: 'al-lughata',
+        root: 'ل غ و',
+        partOfSpeech: 'noun',
+        contextSentenceArabic: 'لِأَتَعَلَّمَ اللُّغَةَ الْعَرَبِيَّةَ الْفُصْحَى.',
+        contextSentenceEnglish: 'So that I learn eloquent Fusha Arabic.',
+        visualKeyword: 'library books calligraphy manuscript',
+      },
+      {
+        arabicWord: 'الْفُصْحَى.',
+        normalizedWord: 'فصحى',
+        englishMeaning: 'Fusha / Classical',
+        transliteration: 'al-fuṣḥā',
+        root: 'ف ص ح',
+        partOfSpeech: 'adjective',
+        contextSentenceArabic: 'لِأَتَعَلَّمَ اللُّغَةَ الْعَرَبِيَّةَ الْفُصْحَى.',
+        contextSentenceEnglish: 'So that I learn eloquent Fusha Arabic.',
+        visualKeyword: 'library books calligraphy manuscript',
       },
     ],
   };
@@ -153,14 +325,9 @@ async function startServer() {
     });
   };
 
-  // API Route: Process Journal Entry with Strict JSON Schema
+  // API Route: Process Journal Entry into Vocalized Fusha Arabic & Interlinear Tokens
   app.post('/api/process-entry', async (req: Request, res: Response) => {
-    const {
-      journalEntry,
-      sourceLanguage = 'en',
-      targetLanguage = 'ar',
-      knownWords = [],
-    } = req.body;
+    const { journalEntry } = req.body;
 
     if (!journalEntry || typeof journalEntry !== 'string') {
       return res.status(400).json({
@@ -168,43 +335,32 @@ async function startServer() {
       });
     }
 
-    const srcLang: 'en' | 'ar' = sourceLanguage === 'ar' ? 'ar' : 'en';
-    const tgtLang: 'en' | 'ar' = targetLanguage === 'en' ? 'en' : 'ar';
-    const srcName = srcLang === 'ar' ? 'Arabic (العربية)' : 'English';
-    const tgtName = tgtLang === 'ar' ? 'Arabic (العربية)' : 'English';
-
     const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
     if (!apiKey) {
-      const fallback = buildLinguisticFallback(
-        journalEntry,
-        srcLang,
-        tgtLang,
-        Array.isArray(knownWords) ? knownWords : []
-      );
-      return res.json(fallback);
+      return res.json(buildFushaLinguisticFallback(journalEntry));
     }
 
     try {
       const ai = getGeminiClient();
-      const knownListStr =
-        Array.isArray(knownWords) && knownWords.length > 0
-          ? `Words the learner already knows: ${knownWords.slice(0, 100).join(', ')}`
-          : 'No prior words recorded yet (mark extracted vocabulary as is_new: true).';
 
-      const prompt = `You are an expert Arabic-English computational linguist and language acquisition coach.
-Translate the following journal entry from ${srcName} into natural, idiomatic ${tgtName}.
-Then extract 4 to 8 high-value vocabulary words or conjugated verbs from your ${tgtName} translation.
+      const prompt = `You are an expert Classical & Modern Standard Arabic (al-'Arabiyyah al-Fusha / Quranic Arabic) scholar and pedagogue teaching English speakers to read and think in Arabic.
 
-For each vocabulary item:
-- "word_conjugated": The exact conjugated or inflected word in ${tgtName} as it appears in the translation (include helpful vowel diacritics/tashkeel if Arabic).
-- "root": If the target language is Arabic, provide the spaced 3-letter triliteral root (الجذر الثلاثي, e.g., "ش ر ي", "ك ت ب", "ع ل م"). If the target language is English, provide the base lemma/infinitive form (e.g., "buy / purchase", "write").
-- "meaning": Clear, concise meaning in the user's native language (${srcName}).
-- "context": Short phrase from the translated entry showing the word in context.
-- "is_new": Boolean. Set to true unless the word is already in the learner's known words list.
+Translate the user's journal entry into strictly eloquent, authentic Fusha Arabic (Modern Standard / Quranic Arabic) with FULL Harakat (complete vowel diacritics / tashkeel on every word, including case endings / i'rab where appropriate). Do NOT use any colloquial dialect.
 
-${knownListStr}
+Then tokenize the ENTIRE translated Fusha Arabic text in exact sequential order into the "tokens" array so that rendering all tokens in order reconstructs the full translated sentence(s) for an interlinear word-by-word reader.
 
-Journal Entry (${srcName}):
+For every token in "tokens":
+- "arabicWord": The exact vocalized Fusha Arabic word as it appears in fullArabicTranslation (with full Harakat).
+- "normalizedWord": The base unvocalized Arabic form without Harakat or definite article "ال" when appropriate (e.g., "مسجد" for "الْمَسْجِدِ", "ذهب" or "ذهبت" for "ذَهَبْتُ").
+- "englishMeaning": Concise contextual English meaning for this word (1–4 words, e.g., "the mosque", "I went", "at dawn").
+- "transliteration": Clean academic transliteration (e.g., "al-masjidi").
+- "root": Spaced 3-letter Arabic triliteral root (e.g., "س ج د", "ك ت ب"). For particles without a 3-letter root, provide the particle letters spaced (e.g., "ف ي").
+- "partOfSpeech": "noun", "verb", "adjective", "particle", or "pronoun".
+- "contextSentenceArabic": The vocalized Fusha sentence from fullArabicTranslation containing this word.
+- "contextSentenceEnglish": The English translation of that context sentence.
+- "visualKeyword": Descriptive 3–5 word visual cue prompt for a flashcard illustration (e.g., "mosque dawn peaceful architecture", "morning coffee notebook sunlit window", "library books calligraphy manuscript", "garden olive trees courtyard").
+
+User's Journal Entry:
 "${journalEntry}"`;
 
       const response = await ai.models.generateContent({
@@ -216,51 +372,70 @@ Journal Entry (${srcName}):
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              translation: {
+              fullArabicTranslation: {
                 type: Type.STRING,
-                description: `The complete, natural translation in ${tgtName}.`,
+                description:
+                  'Vocalized Fusha Arabic text with full Harakat (vowel markings).',
               },
-              vocabulary: {
+              tokens: {
                 type: Type.ARRAY,
                 description:
-                  'Extracted conjugated vocabulary items with their triliteral roots or base lemmas.',
+                  'Ordered word-by-word tokens of the Fusha translation for interlinear display and Word Bank indexing.',
                 items: {
                   type: Type.OBJECT,
                   properties: {
-                    word_conjugated: {
+                    arabicWord: {
                       type: Type.STRING,
-                      description: 'Target language word in conjugated form.',
+                      description: 'Vocalized Fusha Arabic word (e.g., الْمَسْجِدِ).',
+                    },
+                    normalizedWord: {
+                      type: Type.STRING,
+                      description: 'Unvocalized normalized base form (e.g., مسجد).',
+                    },
+                    englishMeaning: {
+                      type: Type.STRING,
+                      description: 'Concise English meaning (e.g., the mosque).',
+                    },
+                    transliteration: {
+                      type: Type.STRING,
+                      description: 'Latin transliteration (e.g., al-masjid).',
                     },
                     root: {
                       type: Type.STRING,
-                      description:
-                        'Base form or Arabic triliteral root (e.g., ش ر ي).',
+                      description: 'Spaced triliteral root (e.g., س ج د).',
                     },
-                    meaning: {
+                    partOfSpeech: {
                       type: Type.STRING,
-                      description: 'Native language meaning.',
+                      description: 'Part of speech (noun, verb, adjective, particle).',
                     },
-                    context: {
+                    contextSentenceArabic: {
                       type: Type.STRING,
-                      description: 'Short phrase from the journal entry.',
+                      description: 'Vocalized Fusha context sentence.',
                     },
-                    is_new: {
-                      type: Type.BOOLEAN,
-                      description:
-                        'Whether this word is new to the user study deck.',
+                    contextSentenceEnglish: {
+                      type: Type.STRING,
+                      description: 'English translation of the context sentence.',
+                    },
+                    visualKeyword: {
+                      type: Type.STRING,
+                      description: 'Visual cue keywords for flashcard illustration.',
                     },
                   },
                   required: [
-                    'word_conjugated',
+                    'arabicWord',
+                    'normalizedWord',
+                    'englishMeaning',
+                    'transliteration',
                     'root',
-                    'meaning',
-                    'context',
-                    'is_new',
+                    'partOfSpeech',
+                    'contextSentenceArabic',
+                    'contextSentenceEnglish',
+                    'visualKeyword',
                   ],
                 },
               },
             },
-            required: ['translation', 'vocabulary'],
+            required: ['fullArabicTranslation', 'tokens'],
           },
         },
       });
@@ -270,31 +445,35 @@ Journal Entry (${srcName}):
         throw new Error('Empty response from Gemini model');
       }
 
-      const parsed = JSON.parse(responseText) as GeminiJournalResponse;
+      const parsed = JSON.parse(responseText) as GeminiFushaTranslationPayload;
       return res.json({
-        translation: parsed.translation || '',
-        vocabulary: Array.isArray(parsed.vocabulary)
-          ? parsed.vocabulary.map((item) => ({
-              word_conjugated: String(item.word_conjugated || ''),
-              root: String(item.root || ''),
-              meaning: String(item.meaning || ''),
-              context: String(item.context || ''),
-              is_new: Boolean(item.is_new ?? true),
+        fullArabicTranslation: parsed.fullArabicTranslation || '',
+        tokens: Array.isArray(parsed.tokens)
+          ? parsed.tokens.slice(0, 80).map((t) => ({
+              arabicWord: String(t.arabicWord || ''),
+              normalizedWord:
+                String(t.normalizedWord || '').trim() ||
+                normalizeArabicServer(String(t.arabicWord || '')),
+              englishMeaning: String(t.englishMeaning || ''),
+              transliteration: String(t.transliteration || ''),
+              root: String(t.root || '—'),
+              partOfSpeech: String(t.partOfSpeech || 'word'),
+              contextSentenceArabic: String(
+                t.contextSentenceArabic || parsed.fullArabicTranslation || ''
+              ),
+              contextSentenceEnglish: String(t.contextSentenceEnglish || ''),
+              visualKeyword: String(
+                t.visualKeyword || 'morning coffee notebook sunlit window'
+              ),
             }))
           : [],
       });
     } catch (error: any) {
       console.warn(
-        '[Server] Gemini API call fell back to linguistic analyzer:',
+        '[Server] Gemini API call fell back to Fusha linguistic analyzer:',
         error?.message || error
       );
-      const fallback = buildLinguisticFallback(
-        journalEntry,
-        srcLang,
-        tgtLang,
-        Array.isArray(knownWords) ? knownWords : []
-      );
-      return res.json(fallback);
+      return res.json(buildFushaLinguisticFallback(journalEntry));
     }
   });
 
@@ -314,7 +493,7 @@ Journal Entry (${srcName}):
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Language Journal server listening on http://0.0.0.0:${PORT}`);
+    console.log(`Fusha Notebook server listening on http://0.0.0.0:${PORT}`);
   });
 }
 

@@ -1,23 +1,29 @@
 @import "tailwindcss";
-@custom-variant dark (&:where(.dark, .dark *));
 
 @layer base {
   :root {
     --font-sans: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-    --font-arabic: 'Noto Naskh Arabic', 'Plus Jakarta Sans', serif;
+    --font-serif: 'Source Serif 4', Georgia, serif;
+    --font-arabic: 'Scheherazade New', 'Amiri', serif;
     --font-mono: 'JetBrains Mono', monospace;
   }
 
   html, body {
     font-family: var(--font-sans);
+    background-color: #FAF7F2;
+    color: #2C2A29;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 }
 
+.font-serif-notebook {
+  font-family: var(--font-serif);
+}
+
 .font-arabic {
   font-family: var(--font-arabic);
-  line-height: 1.85;
+  line-height: 2.15;
 }
 
 .font-mono-tabular {
@@ -25,20 +31,31 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* 3D Flashcard Physics Helpers */
-.perspective-1000 {
-  perspective: 1200px;
+/* Tactile Ruled Notebook Paper Lines */
+.notebook-ruled {
+  background-color: #FDFBF7;
+  background-image: linear-gradient(
+    to bottom,
+    transparent 39px,
+    rgba(194, 184, 168, 0.35) 39px,
+    rgba(194, 184, 168, 0.35) 40px
+  );
+  background-size: 100% 40px;
+  line-height: 40px;
 }
 
-.preserve-3d {
-  transform-style: preserve-3d;
+/* Calming Ink & Page Turn Animation */
+@keyframes pageTurnPulse {
+  0%, 100% {
+    transform: perspective(900px) rotateY(0deg);
+    opacity: 1;
+  }
+  50% {
+    transform: perspective(900px) rotateY(-12deg) translateY(-2px);
+    opacity: 0.92;
+  }
 }
 
-.backface-hidden {
-  backface-visibility: hidden;
-  -webkit-backface-visibility: hidden;
-}
-
-.rotate-y-180 {
-  transform: rotateY(180deg);
+.animate-page-turn {
+  animation: pageTurnPulse 1.8s cubic-bezier(0.16, 1, 0.3, 1) infinite;
 }

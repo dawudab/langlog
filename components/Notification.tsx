@@ -1,32 +1,37 @@
-
 import React, { useEffect } from 'react';
-import { AlertTriangle, CheckCircle, X } from 'lucide-react';
-import { NotificationMessage } from '../types';
+import { X, CheckCircle2, AlertCircle } from 'lucide-react';
 
-interface NotificationProps extends NotificationMessage {
+interface NotificationProps {
+  type: 'success' | 'error';
+  message: string;
   onClose: () => void;
 }
 
-const Notification: React.FC<NotificationProps> = ({ type, message, onClose }) => {
+const Notification: React.FC<NotificationProps> = ({
+  type,
+  message,
+  onClose,
+}) => {
   useEffect(() => {
-    const timer = setTimeout(() => {
-      onClose();
-    }, 5000); // Auto close after 5 seconds
-    return () => clearTimeout(timer);
-  }, [onClose]);
-
-  const bgColor = type === 'success' ? 'bg-emerald-500/90' : 'bg-red-500/90';
-  const Icon = type === 'success' ? CheckCircle : AlertTriangle;
+    const timer = window.setTimeout(onClose, 4200);
+    return () => window.clearTimeout(timer);
+  }, [onClose, message]);
 
   return (
-    <div className={`fixed top-20 right-4 sm:right-6 md:right-8 max-w-sm w-full p-4 rounded-lg shadow-xl text-white ${bgColor} backdrop-blur-sm z-50 flex items-start space-x-3`}>
-      <Icon className="h-6 w-6 flex-shrink-0 mt-0.5" />
-      <div className="flex-grow">
-        <p className="font-medium">{type === 'success' ? 'Success!' : 'Error'}</p>
-        <p className="text-sm">{message}</p>
-      </div>
-      <button onClick={onClose} className="ml-auto -mx-1.5 -my-1.5 p-1.5 rounded-md hover:bg-white/20 transition-colors">
-        <X className="h-5 w-5" />
+    <div className="fixed bottom-20 md:bottom-6 right-4 sm:right-8 z-50 max-w-md bg-[#FDFBF7] border border-[#E2D9C5] text-[#2C2A29] px-4 py-3 rounded-xl shadow-md flex items-center gap-3">
+      {type === 'success' ? (
+        <CheckCircle2 className="w-4 h-4 text-[#2D5A3C] shrink-0" />
+      ) : (
+        <AlertCircle className="w-4 h-4 text-red-700 shrink-0" />
+      )}
+      <span className="text-xs font-medium leading-snug flex-1">{message}</span>
+      <button
+        type="button"
+        onClick={onClose}
+        aria-label="Close notification"
+        className="p-1 text-[#8C8377] hover:text-[#2C2A29]"
+      >
+        <X className="w-3.5 h-3.5" />
       </button>
     </div>
   );

@@ -28,22 +28,16 @@ service cloud.firestore {
       return data.keys().hasAll([
           'userId',
           'originalText',
-          'translatedText',
-          'sourceLanguage',
-          'targetLanguage',
-          'syncStatus',
-          'vocabulary',
+          'fullArabicTranslation',
+          'tokens',
           'createdAt',
           'updatedAt'
         ])
         && data.keys().hasOnly([
           'userId',
           'originalText',
-          'translatedText',
-          'sourceLanguage',
-          'targetLanguage',
-          'syncStatus',
-          'vocabulary',
+          'fullArabicTranslation',
+          'tokens',
           'createdAt',
           'updatedAt'
         ])
@@ -55,57 +49,48 @@ service cloud.firestore {
         && data.originalText is string
         && data.originalText.size() >= 1
         && data.originalText.size() <= 10000
-        && data.translatedText is string
-        && data.translatedText.size() <= 15000
-        && data.sourceLanguage is string
-        && data.sourceLanguage.size() >= 2
-        && data.sourceLanguage.size() <= 10
-        && (data.sourceLanguage == 'en' || data.sourceLanguage == 'ar')
-        && data.targetLanguage is string
-        && data.targetLanguage.size() >= 2
-        && data.targetLanguage.size() <= 10
-        && (data.targetLanguage == 'en' || data.targetLanguage == 'ar')
-        && data.syncStatus is string
-        && data.syncStatus.size() >= 1
-        && data.syncStatus.size() <= 20
-        && (data.syncStatus == 'pending' || data.syncStatus == 'synced' || data.syncStatus == 'failed')
-        && data.vocabulary is list
-        && data.vocabulary.size() <= 50
-        && (data.vocabulary.size() == 0 || data.vocabulary[0] is map)
+        && data.fullArabicTranslation is string
+        && data.fullArabicTranslation.size() >= 1
+        && data.fullArabicTranslation.size() <= 15000
+        && data.tokens is list
+        && data.tokens.size() <= 80
+        && (data.tokens.size() == 0 || data.tokens[0] is map)
         && data.createdAt is timestamp
         && data.updatedAt is timestamp;
     }
 
-    function isValidFlashcard(data) {
+    function isValidWordBankItem(data) {
       return data.keys().hasAll([
           'userId',
-          'entryId',
-          'wordConjugated',
+          'arabicWord',
+          'normalizedWord',
+          'englishMeaning',
+          'transliteration',
           'root',
-          'meaning',
-          'context',
-          'targetLanguage',
-          'isNew',
-          'interval',
-          'repetitions',
-          'easeFactor',
-          'nextReviewDate',
+          'partOfSpeech',
+          'contextSentenceArabic',
+          'contextSentenceEnglish',
+          'visualKeyword',
+          'usageCount',
+          'reviewCount',
+          'isMastered',
           'createdAt',
           'updatedAt'
         ])
         && data.keys().hasOnly([
           'userId',
-          'entryId',
-          'wordConjugated',
+          'arabicWord',
+          'normalizedWord',
+          'englishMeaning',
+          'transliteration',
           'root',
-          'meaning',
-          'context',
-          'targetLanguage',
-          'isNew',
-          'interval',
-          'repetitions',
-          'easeFactor',
-          'nextReviewDate',
+          'partOfSpeech',
+          'contextSentenceArabic',
+          'contextSentenceEnglish',
+          'visualKeyword',
+          'usageCount',
+          'reviewCount',
+          'isMastered',
           'createdAt',
           'updatedAt'
         ])
@@ -114,39 +99,94 @@ service cloud.firestore {
         && data.userId.size() <= 128
         && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
         && data.userId == request.auth.uid
-        && data.entryId is string
-        && data.entryId.size() >= 1
-        && data.entryId.size() <= 128
-        && data.entryId.matches('^[a-zA-Z0-9_\\-]+$')
-        && data.wordConjugated is string
-        && data.wordConjugated.size() >= 1
-        && data.wordConjugated.size() <= 200
+        && data.arabicWord is string
+        && data.arabicWord.size() >= 1
+        && data.arabicWord.size() <= 200
+        && data.normalizedWord is string
+        && data.normalizedWord.size() >= 1
+        && data.normalizedWord.size() <= 200
+        && data.englishMeaning is string
+        && data.englishMeaning.size() >= 1
+        && data.englishMeaning.size() <= 500
+        && data.transliteration is string
+        && data.transliteration.size() >= 1
+        && data.transliteration.size() <= 200
         && data.root is string
         && data.root.size() >= 1
         && data.root.size() <= 100
-        && data.meaning is string
-        && data.meaning.size() >= 1
-        && data.meaning.size() <= 500
-        && data.context is string
-        && data.context.size() <= 1000
-        && data.targetLanguage is string
-        && data.targetLanguage.size() >= 2
-        && data.targetLanguage.size() <= 10
-        && (data.targetLanguage == 'en' || data.targetLanguage == 'ar')
-        && data.isNew is bool
-        && data.interval is number
-        && data.interval >= 0
-        && data.interval <= 36500
-        && data.repetitions is number
-        && data.repetitions >= 0
-        && data.repetitions <= 10000
-        && data.easeFactor is number
-        && data.easeFactor >= 1.3
-        && data.easeFactor <= 5.0
-        && data.nextReviewDate is string
-        && data.nextReviewDate.size() >= 1
-        && data.nextReviewDate.size() <= 64
+        && data.partOfSpeech is string
+        && data.partOfSpeech.size() >= 1
+        && data.partOfSpeech.size() <= 64
+        && data.contextSentenceArabic is string
+        && data.contextSentenceArabic.size() >= 1
+        && data.contextSentenceArabic.size() <= 1500
+        && data.contextSentenceEnglish is string
+        && data.contextSentenceEnglish.size() >= 1
+        && data.contextSentenceEnglish.size() <= 1500
+        && data.visualKeyword is string
+        && data.visualKeyword.size() >= 1
+        && data.visualKeyword.size() <= 300
+        && data.usageCount is number
+        && data.usageCount >= 0
+        && data.usageCount <= 100000
+        && data.reviewCount is number
+        && data.reviewCount >= 0
+        && data.reviewCount <= 100000
+        && data.isMastered is bool
+        && data.isMastered == (data.usageCount >= 20 && data.reviewCount >= 20)
         && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserStats(data) {
+      return data.keys().hasAll([
+          'userId',
+          'currentStreak',
+          'longestStreak',
+          'totalEntries',
+          'totalWordsEncountered',
+          'totalReviewsCompleted',
+          'masteredWordsCount',
+          'lastJournalDate',
+          'updatedAt'
+        ])
+        && data.keys().hasOnly([
+          'userId',
+          'currentStreak',
+          'longestStreak',
+          'totalEntries',
+          'totalWordsEncountered',
+          'totalReviewsCompleted',
+          'masteredWordsCount',
+          'lastJournalDate',
+          'updatedAt'
+        ])
+        && data.userId is string
+        && data.userId.size() >= 1
+        && data.userId.size() <= 128
+        && data.userId.matches('^[a-zA-Z0-9_\\-]+$')
+        && data.userId == request.auth.uid
+        && data.currentStreak is number
+        && data.currentStreak >= 0
+        && data.currentStreak <= 36500
+        && data.longestStreak is number
+        && data.longestStreak >= 0
+        && data.longestStreak <= 36500
+        && data.totalEntries is number
+        && data.totalEntries >= 0
+        && data.totalEntries <= 1000000
+        && data.totalWordsEncountered is number
+        && data.totalWordsEncountered >= 0
+        && data.totalWordsEncountered <= 1000000
+        && data.totalReviewsCompleted is number
+        && data.totalReviewsCompleted >= 0
+        && data.totalReviewsCompleted <= 10000000
+        && data.masteredWordsCount is number
+        && data.masteredWordsCount >= 0
+        && data.masteredWordsCount <= 1000000
+        && data.lastJournalDate is string
+        && data.lastJournalDate.size() >= 1
+        && data.lastJournalDate.size() <= 32
         && data.updatedAt is timestamp;
     }
 
@@ -169,14 +209,10 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action: Sync Translation & Vocabulary or Edit Entry
           incoming().diff(existing()).affectedKeys().hasOnly([
             'originalText',
-            'translatedText',
-            'sourceLanguage',
-            'targetLanguage',
-            'syncStatus',
-            'vocabulary',
+            'fullArabicTranslation',
+            'tokens',
             'updatedAt'
           ])
         );
@@ -184,44 +220,77 @@ service cloud.firestore {
       allow delete: if isSignedIn() && isValidId(entryId) && existing().userId == request.auth.uid;
     }
 
-    // 5. Collection Rules: /flashcards/{cardId}
-    match /flashcards/{cardId} {
-      allow get: if isSignedIn() && isValidId(cardId) && existing().userId == request.auth.uid;
+    // 5. Collection Rules: /wordBank/{wordId}
+    match /wordBank/{wordId} {
+      allow get: if isSignedIn() && isValidId(wordId) && existing().userId == request.auth.uid;
       allow list: if isSignedIn() && existing().userId == request.auth.uid;
 
       allow create: if isSignedIn()
-        && isValidId(cardId)
-        && isValidFlashcard(incoming())
+        && isValidId(wordId)
+        && isValidWordBankItem(incoming())
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time
-        && (
-          (exists(/databases/$(database)/documents/journalEntries/$(incoming().entryId))
-            && get(/databases/$(database)/documents/journalEntries/$(incoming().entryId)).data.userId == request.auth.uid)
-          || (existsAfter(/databases/$(database)/documents/journalEntries/$(incoming().entryId))
-            && getAfter(/databases/$(database)/documents/journalEntries/$(incoming().entryId)).data.userId == request.auth.uid)
-        );
+        && incoming().updatedAt == request.time;
 
       allow update: if isSignedIn()
-        && isValidId(cardId)
-        && isValidFlashcard(incoming())
+        && isValidId(wordId)
+        && isValidWordBankItem(incoming())
         && existing().userId == request.auth.uid
         && incoming().userId == existing().userId
-        && incoming().entryId == existing().entryId
+        && incoming().normalizedWord == existing().normalizedWord
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          // Action: SM-2 Review Update
           incoming().diff(existing()).affectedKeys().hasOnly([
-            'isNew',
-            'interval',
-            'repetitions',
-            'easeFactor',
-            'nextReviewDate',
+            'arabicWord',
+            'englishMeaning',
+            'transliteration',
+            'root',
+            'partOfSpeech',
+            'contextSentenceArabic',
+            'contextSentenceEnglish',
+            'visualKeyword',
+            'usageCount',
+            'reviewCount',
+            'isMastered',
             'updatedAt'
           ])
         );
 
-      allow delete: if isSignedIn() && isValidId(cardId) && existing().userId == request.auth.uid;
+      allow delete: if isSignedIn() && isValidId(wordId) && existing().userId == request.auth.uid;
+    }
+
+    // 6. Collection Rules: /userStats/{userId}
+    match /userStats/{userId} {
+      allow get: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && existing().userId == request.auth.uid;
+      allow list: if isSignedIn() && existing().userId == request.auth.uid;
+
+      allow create: if isSignedIn()
+        && isValidId(userId)
+        && userId == request.auth.uid
+        && isValidUserStats(incoming())
+        && incoming().updatedAt == request.time;
+
+      allow update: if isSignedIn()
+        && isValidId(userId)
+        && userId == request.auth.uid
+        && isValidUserStats(incoming())
+        && existing().userId == request.auth.uid
+        && incoming().userId == existing().userId
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly([
+            'currentStreak',
+            'longestStreak',
+            'totalEntries',
+            'totalWordsEncountered',
+            'totalReviewsCompleted',
+            'masteredWordsCount',
+            'lastJournalDate',
+            'updatedAt'
+          ])
+        );
+
+      allow delete: if isSignedIn() && isValidId(userId) && userId == request.auth.uid && existing().userId == request.auth.uid;
     }
   }
 }

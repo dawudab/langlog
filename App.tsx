@@ -1,99 +1,77 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { onAuthStateChanged, User } from 'firebase/auth';
 import Header from './components/Header';
-import DistractionFreeEditor from './components/DistractionFreeEditor';
-import SRSStudyEngine from './components/SRSStudyEngine';
-import RootLexiconView from './components/RootLexiconView';
-import ArchiveView from './components/ArchiveView';
+import NotebookJournalView from './components/NotebookJournalView';
+import WordBankView from './components/WordBankView';
+import ContextualFlashcardView from './components/ContextualFlashcardView';
+import ProfileStatsView from './components/ProfileStatsView';
 import Notification from './components/Notification';
 import {
-  AppView,
-  JournalEntryRecord,
-  LanguageCode,
+  AppTab,
+  JournalEntry,
   NotificationMessage,
-  ReviewGrade,
-  SM2Flashcard,
+  UserStats,
+  WordBankItem,
+  WordToken,
+  isWordMastered,
+  normalizeArabicToken,
 } from './types';
-import { auth, signInWithGoogle, signOutUser } from './firebase';
-import { analyzeJournalEntry } from './services/geminiService';
 import {
-  calculateSM2Review,
-  getPrioritizedStudyQueue,
-} from './services/sm2Engine';
+  auth,
+  signInWithGoogle,
+  signInWithEmail,
+  registerWithEmail,
+  signOutUser,
+} from './firebase';
+import { translateJournalToFusha } from './services/geminiService';
 import {
   loadLocalEntries,
   saveLocalEntries,
-  loadLocalFlashcards,
-  saveLocalFlashcards,
-  pushEntryToFirestore,
-  pushFlashcardToFirestore,
-  updateFlashcardSM2InFirestore,
-  deleteEntryFromFirestore,
-  subscribeToUserFirestoreData,
-} from './services/syncRepository';
+  loadLocalWordBank,
+  saveLocalWordBank,
+  loadLocalStats,
+  saveLocalStats,
+  getWordIdForNormalized,
+  saveJournalEntryToFirestore,
+  saveWordBankItemToFirestore,
+  saveUserStatsToFirestore,
+  deleteJournalEntryFromFirestore,
+  subscribeToNotebookFirestore,
+} from './services/notebookRepository';
 
 const App: React.FC = () => {
-  const [currentView, setCurrentView] = useState<AppView>('journal');
+  const [activeTab, setActiveTab] = useState<AppTab>('journal');
   const [notification, setNotification] =
     useState<NotificationMessage | null>(null);
 
-  // System-aware Light/Dark Theme
-  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
-    const saved = localStorage.getItem('langlog_theme');
-    if (saved === 'dark' || saved === 'light') {
-      return saved === 'dark';
-    }
-    return window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? true;
-  });
-
-  useEffect(() => {
-    document.documentElement.classList.toggle('dark', isDarkMode);
-    localStorage.setItem('langlog_theme', isDarkMode ? 'dark' : 'light');
-  }, [isDarkMode]);
-
-  // Network & Offline-First Simulation State
-  const [browserOnline, setBrowserOnline] = useState<boolean>(
-    typeof navigator !== 'undefined' ? navigator.onLine : true
-  );
-  const [simulateOffline, setSimulateOffline] = useState<boolean>(false);
-  const isOnline = browserOnline && !simulateOffline;
-
-  useEffect(() => {
-    const onOnline = () => setBrowserOnline(true);
-    const onOffline = () => setBrowserOnline(false);
-    window.addEventListener('online', onOnline);
-    window.addEventListener('offline', onOffline);
-    return () => {
-      window.removeEventListener('online', onOnline);
-      window.removeEventListener('offline', onOffline);
-    };
-  }, []);
-
-  // Firebase Auth State
   const [user, setUser] = useState<User | null>(null);
-
-  // Offline-First Local State (Local Persistence + Cloud Firestore Sync)
-  const [entries, setEntries] = useState<JournalEntryRecord[]>(() =>
+  const [entries, setEntries] = useState<JournalEntry[]>(() =>
     loadLocalEntries()
   );
-  const [cards, setCards] = useState<SM2Flashcard[]>(() =>
-    loadLocalFlashcards()
+  const [wordBank, setWordBank] = useState<WordBankItem[]>(() =>
+    loadLocalWordBank()
   );
+  const [stats, setStats] = useState<UserStats>(() => loadLocalStats());
+
   const [activeEntryId, setActiveEntryId] = useState<string | null>(() => {
     const initial = loadLocalEntries();
     return initial[0]?.id ?? null;
   });
-  const [isSyncingPending, setIsSyncingPending] = useState<boolean>(false);
+  const [isWritingMode, setIsWritingMode] = useState<boolean>(false);
 
   useEffect(() => {
     saveLocalEntries(entries);
   }, [entries]);
 
   useEffect(() => {
-    saveLocalFlashcards(cards);
-  }, [cards]);
+    saveLocalWordBank(wordBank);
+  }, [wordBank]);
 
-  // Subscribe to Firebase Auth & Firestore when authenticated
+  useEffect(() => {
+    saveLocalStats(stats);
+  }, [stats]);
+
+  // Silent Cloud Firestore synchronization under the hood
   useEffect(() => {
     let unsubFirestore: (() => void) | null = null;
     const unsubAuth = onAuthStateChanged(auth, (firebaseUser) => {
@@ -103,12 +81,12 @@ const App: React.FC = () => {
         unsubFirestore = null;
       }
       if (firebaseUser) {
-        unsubFirestore = subscribeToUserFirestoreData(
+        unsubFirestore = subscribeToNotebookFirestore(
           firebaseUser.uid,
           (remoteEntries) => {
             if (remoteEntries.length > 0) {
               setEntries((prev) => {
-                const map = new Map<string, JournalEntryRecord>();
+                const map = new Map<string, JournalEntry>();
                 prev.forEach((e) => map.set(e.id, e));
                 remoteEntries.forEach((e) => map.set(e.id, e));
                 return Array.from(map.values()).sort((a, b) =>
@@ -117,12 +95,12 @@ const App: React.FC = () => {
               });
             }
           },
-          (remoteCards) => {
-            if (remoteCards.length > 0) {
-              setCards((prev) => {
-                const map = new Map<string, SM2Flashcard>();
-                prev.forEach((c) => map.set(c.id, c));
-                remoteCards.forEach((c) => map.set(c.id, c));
+          (remoteWords) => {
+            if (remoteWords.length > 0) {
+              setWordBank((prev) => {
+                const map = new Map<string, WordBankItem>();
+                prev.forEach((w) => map.set(w.id, w));
+                remoteWords.forEach((w) => map.set(w.id, w));
                 return Array.from(map.values());
               });
             }
@@ -137,392 +115,361 @@ const App: React.FC = () => {
     };
   }, []);
 
-  // Sync any pending entries (`sync_status: pending`) when online
-  const syncPendingEntries = useCallback(async () => {
-    if (!isOnline || isSyncingPending) return;
-    const pendingList = entries.filter((e) => e.syncStatus === 'pending');
-    if (pendingList.length === 0) return;
-
-    setIsSyncingPending(true);
-    try {
-      const knownWords = cards.map((c) => c.wordConjugated);
-
-      for (const pendingEntry of pendingList) {
-        const result = await analyzeJournalEntry(
-          pendingEntry.originalText,
-          pendingEntry.sourceLanguage,
-          pendingEntry.targetLanguage,
-          knownWords
-        );
-
-        const nowIso = new Date().toISOString();
-        const syncedEntry: JournalEntryRecord = {
-          ...pendingEntry,
-          translatedText: result.translation,
-          vocabulary: result.vocabulary,
-          syncStatus: 'synced',
-          updatedAt: nowIso,
-        };
-
-        const generatedCards: SM2Flashcard[] = result.vocabulary.map(
-          (v, idx) => ({
-            id: `card_${pendingEntry.id}_${idx}`,
-            userId: user?.uid || 'local_user',
-            entryId: pendingEntry.id,
-            wordConjugated: v.word_conjugated,
-            root: v.root,
-            meaning: v.meaning,
-            context: v.context,
-            targetLanguage: pendingEntry.targetLanguage,
-            isNew: v.is_new,
-            interval: 0,
-            repetitions: 0,
-            easeFactor: 2.5,
-            nextReviewDate: nowIso,
-            createdAt: nowIso,
-            updatedAt: nowIso,
-            pendingSync: false,
-          })
-        );
-
-        setEntries((prev) =>
-          prev.map((e) => (e.id === pendingEntry.id ? syncedEntry : e))
-        );
-        setCards((prev) => {
-          const existingWords = new Set(
-            prev.map((c) => c.wordConjugated.toLowerCase())
-          );
-          const freshCards = generatedCards.filter(
-            (c) => !existingWords.has(c.wordConjugated.toLowerCase())
-          );
-          return [...freshCards, ...prev];
-        });
-
-        if (user) {
-          await pushEntryToFirestore(syncedEntry);
-          for (const card of generatedCards) {
-            await pushFlashcardToFirestore(card);
-          }
-        }
-      }
-
-      setNotification({
-        type: 'success',
-        message: `Synced ${pendingList.length} pending ${
-          pendingList.length === 1 ? 'entry' : 'entries'
-        } & extracted roots to SRS deck.`,
-      });
-    } catch (error: any) {
-      setNotification({
-        type: 'error',
-        message: error?.message || 'Failed to sync pending entries.',
-      });
-    } finally {
-      setIsSyncingPending(false);
-    }
-  }, [isOnline, isSyncingPending, entries, cards, user]);
-
-  // Automatically trigger background sync when network is restored
-  useEffect(() => {
-    if (isOnline && entries.some((e) => e.syncStatus === 'pending')) {
-      syncPendingEntries();
-    }
-  }, [isOnline]);
-
-  // Handle writing & saving a new journal entry (Offline-First)
-  const handleSubmitEntry = useCallback(
-    async (
-      text: string,
-      sourceLang: LanguageCode,
-      targetLang: LanguageCode
-    ): Promise<JournalEntryRecord> => {
+  // Submit a new English/Arabic journal entry -> Gemini translates to vocalized Fusha & updates Word Bank
+  const handleSubmitJournalEntry = useCallback(
+    async (text: string): Promise<JournalEntry> => {
+      const geminiResult = await translateJournalToFusha(text);
       const nowIso = new Date().toISOString();
       const entryId = `entry_${Date.now()}`;
+      const currentUserId = user?.uid || 'local_user';
 
-      // Step 1: Always save locally first with sync_status: pending
-      const localPendingEntry: JournalEntryRecord = {
-        id: entryId,
-        userId: user?.uid || 'local_user',
-        originalText: text,
-        translatedText: '',
-        sourceLanguage: sourceLang,
-        targetLanguage: targetLang,
-        syncStatus: 'pending',
-        vocabulary: [],
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
+      // Map existing word bank by normalizedWord to increment usageCount
+      const bankMap = new Map<string, WordBankItem>();
+      wordBank.forEach((item) => {
+        bankMap.set(normalizeArabicToken(item.normalizedWord), item);
+      });
 
-      setEntries((prev) => [localPendingEntry, ...prev]);
-      setActiveEntryId(entryId);
+      const updatedWordsToPersist: Array<{
+        item: WordBankItem;
+        isNew: boolean;
+      }> = [];
 
-      // If offline, leave as sync_status: pending in local queue
-      if (!isOnline) {
-        setNotification({
-          type: 'success',
-          message:
-            'Saved locally (sync_status: pending). Will translate & sync when back online.',
+      const enrichedTokens: WordToken[] = geminiResult.tokens.map((raw) => {
+        const norm =
+          normalizeArabicToken(raw.normalizedWord) ||
+          normalizeArabicToken(raw.arabicWord) ||
+          raw.arabicWord;
+        const existing = bankMap.get(norm);
+
+        const nextUsageCount = existing ? existing.usageCount + 1 : 1;
+        const nextReviewCount = existing ? existing.reviewCount : 0;
+        const mastered = isWordMastered({
+          usageCount: nextUsageCount,
+          reviewCount: nextReviewCount,
         });
-        return localPendingEntry;
-      }
 
-      // Step 2: Online -> Trigger Gemini translation + root extraction and push to Firestore
-      try {
-        const knownWords = cards.map((c) => c.wordConjugated);
-        const result = await analyzeJournalEntry(
-          text,
-          sourceLang,
-          targetLang,
-          knownWords
-        );
-
-        const syncedEntry: JournalEntryRecord = {
-          ...localPendingEntry,
-          translatedText: result.translation,
-          vocabulary: result.vocabulary,
-          syncStatus: 'synced',
-          updatedAt: new Date().toISOString(),
+        const updatedBankItem: WordBankItem = {
+          id: existing ? existing.id : getWordIdForNormalized(norm),
+          userId: currentUserId,
+          arabicWord: raw.arabicWord,
+          normalizedWord: norm,
+          englishMeaning: raw.englishMeaning,
+          transliteration: raw.transliteration,
+          root: raw.root,
+          partOfSpeech: raw.partOfSpeech,
+          contextSentenceArabic:
+            raw.contextSentenceArabic || geminiResult.fullArabicTranslation,
+          contextSentenceEnglish: raw.contextSentenceEnglish || text,
+          visualKeyword:
+            raw.visualKeyword || 'morning coffee notebook sunlit window',
+          usageCount: nextUsageCount,
+          reviewCount: nextReviewCount,
+          isMastered: mastered,
+          createdAt: existing ? existing.createdAt : nowIso,
+          updatedAt: nowIso,
         };
 
-        const newCards: SM2Flashcard[] = result.vocabulary.map((v, idx) => ({
-          id: `card_${entryId}_${idx}`,
-          userId: user?.uid || 'local_user',
-          entryId,
-          wordConjugated: v.word_conjugated,
-          root: v.root,
-          meaning: v.meaning,
-          context: v.context,
-          targetLanguage: targetLang,
-          isNew: v.is_new,
-          interval: 0,
-          repetitions: 0,
-          easeFactor: 2.5,
-          nextReviewDate: new Date().toISOString(),
-          createdAt: nowIso,
-          updatedAt: nowIso,
-          pendingSync: false,
-        }));
-
-        setEntries((prev) =>
-          prev.map((e) => (e.id === entryId ? syncedEntry : e))
-        );
-        setCards((prev) => {
-          const existingWords = new Set(
-            prev.map((c) => c.wordConjugated.toLowerCase())
-          );
-          const uniqueNew = newCards.filter(
-            (c) => !existingWords.has(c.wordConjugated.toLowerCase())
-          );
-          return [...uniqueNew, ...prev];
+        bankMap.set(norm, updatedBankItem);
+        updatedWordsToPersist.push({
+          item: updatedBankItem,
+          isNew: !existing,
         });
 
-        if (user) {
-          await pushEntryToFirestore(syncedEntry);
-          for (const card of newCards) {
-            await pushFlashcardToFirestore(card);
-          }
-        }
+        return {
+          arabicWord: raw.arabicWord,
+          normalizedWord: norm,
+          englishMeaning: raw.englishMeaning,
+          transliteration: raw.transliteration,
+          root: raw.root,
+          partOfSpeech: raw.partOfSpeech,
+          contextSentenceArabic: updatedBankItem.contextSentenceArabic,
+          contextSentenceEnglish: updatedBankItem.contextSentenceEnglish,
+          visualKeyword: updatedBankItem.visualKeyword,
+          usageCount: nextUsageCount,
+          reviewCount: nextReviewCount,
+        };
+      });
 
-        setNotification({
-          type: 'success',
-          message: `Translated & extracted ${result.vocabulary.length} vocabulary roots into your SRS study queue.`,
-        });
-        return syncedEntry;
-      } catch (error: any) {
-        setNotification({
-          type: 'error',
-          message:
-            error?.message ||
-            'Saved locally with sync_status: pending. Will retry when online.',
-        });
-        return localPendingEntry;
-      }
-    },
-    [user, isOnline, cards]
-  );
-
-  // Handle SM-2 flashcard review grade (Hard / Good / Easy)
-  const handleGradeCard = useCallback(
-    async (card: SM2Flashcard, grade: ReviewGrade) => {
-      const updatedCard = calculateSM2Review(card, grade);
-      setCards((prev) =>
-        prev.map((c) => (c.id === card.id ? updatedCard : c))
-      );
-
-      if (user && isOnline) {
-        try {
-          await updateFlashcardSM2InFirestore(updatedCard);
-        } catch (err) {
-          console.warn('Will sync flashcard review later:', err);
-        }
-      }
-    },
-    [user, isOnline]
-  );
-
-  // Add custom vocabulary & triliteral root from Root Lexicon
-  const handleAddCustomCard = useCallback(
-    async (cardInput: {
-      wordConjugated: string;
-      root: string;
-      meaning: string;
-      context: string;
-      targetLanguage: LanguageCode;
-    }) => {
-      const nowIso = new Date().toISOString();
-      const newCard: SM2Flashcard = {
-        id: `card_custom_${Date.now()}`,
-        userId: user?.uid || 'local_user',
-        entryId: activeEntryId || 'custom_lexicon',
-        wordConjugated: cardInput.wordConjugated,
-        root: cardInput.root,
-        meaning: cardInput.meaning,
-        context: cardInput.context,
-        targetLanguage: cardInput.targetLanguage,
-        isNew: true,
-        interval: 0,
-        repetitions: 0,
-        easeFactor: 2.5,
-        nextReviewDate: nowIso,
+      const newEntry: JournalEntry = {
+        id: entryId,
+        userId: currentUserId,
+        originalText: text,
+        fullArabicTranslation: geminiResult.fullArabicTranslation,
+        tokens: enrichedTokens,
         createdAt: nowIso,
         updatedAt: nowIso,
-        pendingSync: !isOnline,
       };
 
-      setCards((prev) => [newCard, ...prev]);
+      const nextWordBank = Array.from(bankMap.values());
+      const masteredCount = nextWordBank.filter((w) =>
+        isWordMastered(w)
+      ).length;
 
-      if (user && isOnline) {
-        try {
-          await pushFlashcardToFirestore(newCard);
-        } catch (err) {
-          console.warn('Failed to push custom flashcard to Firestore:', err);
-        }
-      }
-
-      setNotification({
-        type: 'success',
-        message: `Added "${cardInput.wordConjugated}" (${cardInput.root}) to your SRS queue.`,
-      });
-    },
-    [user, isOnline, activeEntryId]
-  );
-
-  // Prioritize an existing vocabulary card in the daily SM-2 queue
-  const handlePrioritizeCard = useCallback(
-    async (cardId: string) => {
-      const target = cards.find((c) => c.id === cardId);
-      if (!target) return;
-
-      const nowIso = new Date().toISOString();
-      const prioritized: SM2Flashcard = {
-        ...target,
-        isNew: true,
-        nextReviewDate: nowIso,
+      const nextStats: UserStats = {
+        ...stats,
+        userId: currentUserId,
+        totalEntries: entries.length + 1,
+        totalWordsEncountered: nextWordBank.length,
+        masteredWordsCount: masteredCount,
+        lastJournalDate: nowIso.slice(0, 10),
         updatedAt: nowIso,
       };
 
-      setCards((prev) =>
-        prev.map((c) => (c.id === cardId ? prioritized : c))
+      setEntries((prev) => [newEntry, ...prev]);
+      setWordBank(nextWordBank);
+      setStats(nextStats);
+      setActiveEntryId(entryId);
+      setIsWritingMode(false);
+
+      // Silently persist to Firestore if authenticated
+      if (user) {
+        saveJournalEntryToFirestore(newEntry).catch(() => {});
+        for (const { item, isNew } of updatedWordsToPersist) {
+          saveWordBankItemToFirestore(item, isNew).catch(() => {});
+        }
+        saveUserStatsToFirestore(nextStats).catch(() => {});
+      }
+
+      setNotification({
+        type: 'success',
+        message: `Translated into vocalized Fusha Arabic & updated ${enrichedTokens.length} words in your Word Bank.`,
+      });
+
+      return newEntry;
+    },
+    [user, wordBank, stats, entries.length]
+  );
+
+  // Handle completing a Tri-Modal Contextual Flashcard review
+  const handleCompleteFlashcardReview = useCallback(
+    (wordId: string, outcome: 'again' | 'got_it') => {
+      const target = wordBank.find((w) => w.id === wordId);
+      if (!target) return;
+
+      const increment = outcome === 'got_it' ? 1 : 0;
+      const nextReviewCount = target.reviewCount + increment;
+      const nowMastered = isWordMastered({
+        usageCount: target.usageCount,
+        reviewCount: nextReviewCount,
+      });
+      const justReachedMastery = !target.isMastered && nowMastered;
+
+      const updatedItem: WordBankItem = {
+        ...target,
+        reviewCount: nextReviewCount,
+        isMastered: nowMastered,
+        updatedAt: new Date().toISOString(),
+      };
+
+      const nextWordBank = wordBank.map((w) =>
+        w.id === wordId ? updatedItem : w
+      );
+      setWordBank(nextWordBank);
+
+      const nextStats: UserStats = {
+        ...stats,
+        totalReviewsCompleted: stats.totalReviewsCompleted + 1,
+        masteredWordsCount: nextWordBank.filter((w) => isWordMastered(w))
+          .length,
+        updatedAt: new Date().toISOString(),
+      };
+      setStats(nextStats);
+
+      if (user) {
+        saveWordBankItemToFirestore(updatedItem, false).catch(() => {});
+        saveUserStatsToFirestore(nextStats).catch(() => {});
+      }
+
+      if (justReachedMastery) {
+        setNotification({
+          type: 'success',
+          message: `Mabruk! "${target.arabicWord}" reached 20/20 Mastery! Its English translation is now hidden in your journal.`,
+        });
+      }
+    },
+    [wordBank, stats, user]
+  );
+
+  // Interactive helper to let users test/toggle the 20/20 Hidden-English Mastery rule on any word
+  const handleFastForwardMasteryByNorm = useCallback(
+    (normalizedWord: string) => {
+      const norm = normalizeArabicToken(normalizedWord);
+      const existing = wordBank.find(
+        (w) =>
+          normalizeArabicToken(w.normalizedWord) === norm ||
+          normalizeArabicToken(w.arabicWord) === norm
       );
 
-      if (user && isOnline) {
-        try {
-          await updateFlashcardSM2InFirestore(prioritized);
-        } catch (err) {
-          console.warn('Will sync prioritized card later:', err);
+      if (existing) {
+        const updated: WordBankItem = {
+          ...existing,
+          usageCount: Math.max(20, existing.usageCount),
+          reviewCount: Math.max(20, existing.reviewCount),
+          isMastered: true,
+          updatedAt: new Date().toISOString(),
+        };
+        setWordBank((prev) =>
+          prev.map((w) => (w.id === existing.id ? updated : w))
+        );
+        if (user) {
+          saveWordBankItemToFirestore(updated, false).catch(() => {});
         }
-      }
-
-      setNotification({
-        type: 'success',
-        message: `Prioritized "${target.wordConjugated}" (is_new: true) for today's study queue.`,
-      });
-    },
-    [cards, user, isOnline]
-  );
-
-  const handleDeleteCard = useCallback((cardId: string) => {
-    setCards((prev) => prev.filter((c) => c.id !== cardId));
-    setNotification({
-      type: 'success',
-      message: 'Removed vocabulary item from lexicon.',
-    });
-  }, []);
-
-  const handleDeleteEntry = useCallback(
-    async (entryId: string) => {
-      setEntries((prev) => prev.filter((e) => e.id !== entryId));
-      if (activeEntryId === entryId) {
-        setActiveEntryId(null);
-      }
-      if (user && isOnline) {
-        try {
-          await deleteEntryFromFirestore(entryId);
-        } catch (err) {
-          console.warn('Failed to delete remote entry:', err);
-        }
-      }
-      setNotification({
-        type: 'success',
-        message: 'Journal entry removed.',
-      });
-    },
-    [activeEntryId, user, isOnline]
-  );
-
-  const handleAuthAction = async () => {
-    try {
-      if (user) {
-        await signOutUser();
         setNotification({
           type: 'success',
-          message: 'Signed out. Continuing in local offline-first mode.',
+          message: `"${existing.arabicWord}" promoted to 20/20 Mastery! English gloss is now hidden in the interlinear reader.`,
         });
       } else {
-        await signInWithGoogle();
+        // Create mastered entry in wordBank if token wasn't in bank yet
+        const activeEntry = entries.find((e) => e.id === activeEntryId);
+        const tokenMatch = activeEntry?.tokens.find(
+          (t) =>
+            normalizeArabicToken(t.normalizedWord) === norm ||
+            normalizeArabicToken(t.arabicWord) === norm
+        );
+        if (!tokenMatch) return;
+
+        const nowIso = new Date().toISOString();
+        const created: WordBankItem = {
+          id: getWordIdForNormalized(norm),
+          userId: user?.uid || 'local_user',
+          ...tokenMatch,
+          normalizedWord: norm,
+          usageCount: 20,
+          reviewCount: 20,
+          isMastered: true,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        setWordBank((prev) => [created, ...prev]);
+        if (user) {
+          saveWordBankItemToFirestore(created, true).catch(() => {});
+        }
         setNotification({
           type: 'success',
-          message: 'Connected to Firebase Cloud Firestore.',
+          message: `"${tokenMatch.arabicWord}" promoted to 20/20 Mastery! English gloss is now hidden in the interlinear reader.`,
         });
       }
+    },
+    [wordBank, entries, activeEntryId, user]
+  );
+
+  const handleToggleMasteryInBank = useCallback(
+    (wordId: string) => {
+      const target = wordBank.find((w) => w.id === wordId);
+      if (!target) return;
+      const currentlyMastered = isWordMastered(target);
+      const updated: WordBankItem = {
+        ...target,
+        usageCount: currentlyMastered ? 8 : Math.max(20, target.usageCount),
+        reviewCount: currentlyMastered ? 10 : Math.max(20, target.reviewCount),
+        isMastered: !currentlyMastered,
+        updatedAt: new Date().toISOString(),
+      };
+      setWordBank((prev) => prev.map((w) => (w.id === wordId ? updated : w)));
+      if (user) {
+        saveWordBankItemToFirestore(updated, false).catch(() => {});
+      }
+      setNotification({
+        type: 'success',
+        message: currentlyMastered
+          ? `"${target.arabicWord}" returned to Learning state.`
+          : `"${target.arabicWord}" set to 20/20 Mastered! English translation will now hide in journal entries.`,
+      });
+    },
+    [wordBank, user]
+  );
+
+  const handleDeleteEntry = useCallback(
+    (entryId: string) => {
+      setEntries((prev) => prev.filter((e) => e.id !== entryId));
+      if (activeEntryId === entryId) {
+        const remaining = entries.filter((e) => e.id !== entryId);
+        setActiveEntryId(remaining[0]?.id ?? null);
+      }
+      if (user) {
+        deleteJournalEntryFromFirestore(entryId).catch(() => {});
+      }
+      setNotification({
+        type: 'success',
+        message: 'Notebook page removed.',
+      });
+    },
+    [activeEntryId, entries, user]
+  );
+
+  const handleGoogleSignIn = async () => {
+    try {
+      await signInWithGoogle();
+      setNotification({
+        type: 'success',
+        message: 'Signed in with Google.',
+      });
     } catch (error: any) {
       setNotification({
         type: 'error',
-        message: error?.message || 'Authentication action cancelled.',
+        message: error?.message || 'Google sign-in could not be completed.',
       });
     }
   };
 
-  const activeEntry = useMemo(
-    () => entries.find((e) => e.id === activeEntryId) || entries[0] || null,
-    [entries, activeEntryId]
-  );
+  const handleEmailAuth = async (
+    email: string,
+    password: string,
+    isRegistering: boolean
+  ) => {
+    try {
+      if (isRegistering) {
+        await registerWithEmail(email, password);
+        setNotification({
+          type: 'success',
+          message: 'Account created and signed in.',
+        });
+      } else {
+        await signInWithEmail(email, password);
+        setNotification({
+          type: 'success',
+          message: 'Signed in with email.',
+        });
+      }
+    } catch (error: any) {
+      setNotification({
+        type: 'error',
+        message: error?.message || 'Authentication failed.',
+      });
+    }
+  };
 
-  const dueCardsCount = useMemo(
-    () => getPrioritizedStudyQueue(cards, false).length,
-    [cards]
-  );
+  const handleSignOut = async () => {
+    try {
+      await signOutUser();
+      setNotification({
+        type: 'success',
+        message: 'Signed out.',
+      });
+    } catch (error: any) {
+      setNotification({
+        type: 'error',
+        message: error?.message || 'Failed to sign out.',
+      });
+    }
+  };
 
-  const pendingSyncCount = useMemo(
-    () => entries.filter((e) => e.syncStatus === 'pending').length,
-    [entries]
+  const masteredCount = useMemo(
+    () => wordBank.filter((w) => isWordMastered(w)).length,
+    [wordBank]
   );
-
-  const uniqueRootsCount = useMemo(() => {
-    const roots = new Set(cards.map((c) => c.root.trim() || c.wordConjugated));
-    return roots.size;
-  }, [cards]);
 
   return (
-    <div className="min-h-screen bg-[#FAF8F5] dark:bg-[#0B0F17] text-slate-900 dark:text-slate-100 flex flex-col transition-colors">
+    <div className="min-h-screen bg-[#FAF7F2] text-[#2C2A29] flex flex-col">
       <Header
-        currentView={currentView}
-        setCurrentView={setCurrentView}
-        dueCardsCount={dueCardsCount}
-        pendingSyncCount={pendingSyncCount}
-        rootsCount={uniqueRootsCount}
-        userEmail={user?.email || null}
-        onAuthAction={handleAuthAction}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        wordBankCount={wordBank.length}
+        masteredCount={masteredCount}
+        onStartNewEntry={() => {
+          setIsWritingMode(true);
+          setActiveTab('journal');
+        }}
       />
 
       {notification && (
@@ -534,65 +481,62 @@ const App: React.FC = () => {
       )}
 
       <main className="flex-grow">
-        {currentView === 'journal' && (
-          <DistractionFreeEditor
-            isOnline={isOnline}
-            onToggleOfflineSim={() => setSimulateOffline((prev) => !prev)}
-            isDarkMode={isDarkMode}
-            onToggleDarkMode={() => setIsDarkMode((prev) => !prev)}
-            pendingCount={pendingSyncCount}
-            isSyncingPending={isSyncingPending}
-            onSyncPendingNow={syncPendingEntries}
-            onSubmitEntry={handleSubmitEntry}
-            activeEntry={activeEntry}
-            onNavigateToStudy={() => setCurrentView('study')}
-            onNavigateToRoots={() => setCurrentView('roots')}
-            dueCardsCount={dueCardsCount}
-          />
-        )}
-
-        {currentView === 'study' && (
-          <SRSStudyEngine
-            cards={cards}
-            onGradeCard={handleGradeCard}
-            onNavigateToJournal={() => setCurrentView('journal')}
-          />
-        )}
-
-        {currentView === 'roots' && (
-          <RootLexiconView
-            cards={cards}
-            onAddCustomCard={handleAddCustomCard}
-            onPrioritizeCard={handlePrioritizeCard}
-            onDeleteCard={handleDeleteCard}
-            onNavigateToStudy={() => setCurrentView('study')}
-            dueCardsCount={dueCardsCount}
-          />
-        )}
-
-        {currentView === 'archive' && (
-          <ArchiveView
+        {activeTab === 'journal' && (
+          <NotebookJournalView
             entries={entries}
-            cards={cards}
-            isOnline={isOnline}
-            isSyncingPending={isSyncingPending}
-            onSyncPendingNow={syncPendingEntries}
-            onSelectEntry={(entry) => {
-              setActiveEntryId(entry.id);
-              setCurrentView('journal');
+            wordBank={wordBank}
+            activeEntryId={activeEntryId}
+            isWritingMode={isWritingMode}
+            onSelectEntry={(entryId) => {
+              setActiveEntryId(entryId);
+              setIsWritingMode(false);
             }}
+            onStartWriting={() => setIsWritingMode(true)}
+            onSubmitJournalEntry={handleSubmitJournalEntry}
             onDeleteEntry={handleDeleteEntry}
+            onNavigateToStudy={() => setActiveTab('study')}
+            onNavigateToWordBank={() => setActiveTab('wordBank')}
+            onFastForwardMastery={handleFastForwardMasteryByNorm}
+          />
+        )}
+
+        {activeTab === 'wordBank' && (
+          <WordBankView
+            wordBank={wordBank}
+            onToggleMasteryDemo={handleToggleMasteryInBank}
+            onNavigateToStudy={() => setActiveTab('study')}
+          />
+        )}
+
+        {activeTab === 'study' && (
+          <ContextualFlashcardView
+            wordBank={wordBank}
+            onCompleteReview={handleCompleteFlashcardReview}
+            onNavigateToJournal={() => {
+              setIsWritingMode(true);
+              setActiveTab('journal');
+            }}
+          />
+        )}
+
+        {activeTab === 'profile' && (
+          <ProfileStatsView
+            stats={stats}
+            wordBank={wordBank}
+            entriesCount={entries.length}
+            userEmail={user?.email || null}
+            onGoogleSignIn={handleGoogleSignIn}
+            onEmailAuth={handleEmailAuth}
+            onSignOut={handleSignOut}
           />
         )}
       </main>
 
-      <footer className="hidden md:flex items-center justify-between max-w-7xl w-full mx-auto px-8 py-5 text-xs text-slate-500 dark:text-slate-500 border-t border-stone-200/70 dark:border-slate-800/70">
-        <span>Language Journal · English &amp; Arabic Acquisition</span>
+      <footer className="hidden md:flex items-center justify-between max-w-5xl w-full mx-auto px-8 py-5 text-xs text-[#7A7267] border-t border-[#E6DEC8]">
         <span>
-          {user?.email
-            ? `Cloud Sync Active (${user.email})`
-            : 'Local Offline-First Storage Ready'}
+          Fusha Notebook · Modern Standard &amp; Quranic Arabic Acquisition
         </span>
+        <span>20 Uses + 20 Reviews = Direct Arabic Reading</span>
       </footer>
     </div>
   );
